@@ -267,6 +267,46 @@ button {
   margin: 3px 0 6px;
 }
 
+.project-header-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.compact-field {
+  color: #334155;
+  display: grid;
+  font-size: 0.78rem;
+  font-weight: 900;
+  gap: 5px;
+  min-width: 220px;
+}
+
+.compact-field select {
+  min-height: 40px;
+}
+
+.role-field {
+  min-width: 150px;
+}
+
+.toggle-field {
+  align-items: center;
+  color: #334155;
+  display: flex;
+  font-size: 0.88rem;
+  font-weight: 800;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.toggle-field input {
+  height: 18px;
+  width: 18px;
+}
+
 .eyebrow {
   color: #2563eb;
   font-size: 0.78rem;
@@ -618,6 +658,11 @@ button:disabled {
   padding: 16px;
 }
 
+.project-card.selected {
+  border-color: #93c5fd;
+  box-shadow: 0 14px 32px rgb(37 99 235 / 12%);
+}
+
 .project-card-meta {
   display: grid;
   gap: 8px;
@@ -650,6 +695,25 @@ button:disabled {
   padding: 18px;
 }
 
+.timeline-body {
+  display: grid;
+  gap: 16px;
+  position: relative;
+}
+
+.today-marker {
+  background: #ef4444;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 3px 7px;
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
 .timeline-dates {
   color: #64748b;
   display: grid;
@@ -671,6 +735,10 @@ button:disabled {
   overflow: hidden;
 }
 
+.timeline-track.thin {
+  height: 18px;
+}
+
 .timeline-track span {
   align-items: center;
   background: #2563eb;
@@ -684,6 +752,42 @@ button:disabled {
   min-width: 90px;
 }
 
+.timeline-track .phase-bar.status-complete {
+  background: #22c55e;
+}
+
+.timeline-track .phase-bar.status-active {
+  background: #2563eb;
+}
+
+.timeline-track .phase-bar.status-planned {
+  background: #94a3b8;
+}
+
+.timeline-track .task-bar {
+  min-width: 22px;
+}
+
+.timeline-track .task-bar.success {
+  background: #22c55e;
+}
+
+.timeline-track .task-bar.warning {
+  background: #f59e0b;
+}
+
+.timeline-track .task-bar.danger {
+  background: #ef4444;
+}
+
+.timeline-track .task-bar.info {
+  background: #2563eb;
+}
+
+.timeline-track .task-bar.muted {
+  background: #94a3b8;
+}
+
 .panel-note {
   margin-top: 14px;
 }
@@ -693,6 +797,27 @@ button:disabled {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filter-row,
+.inline-create-form,
+.detail-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.inline-create-form {
+  border-top: 1px solid #e2e8f0;
+  margin: 18px 0 0;
+  padding-top: 18px;
+}
+
+.risk-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 label {
@@ -796,6 +921,81 @@ textarea:focus {
   overflow-x: auto;
 }
 
+.button-reset {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  min-height: auto;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.button-reset:hover {
+  background: transparent;
+}
+
+.detail-panel {
+  background: #ffffff;
+  border-left: 1px solid #e2e8f0;
+  box-shadow: -16px 0 40px rgb(15 23 42 / 12%);
+  display: grid;
+  gap: 18px;
+  max-width: 440px;
+  overflow-y: auto;
+  padding: 22px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  z-index: 10;
+}
+
+.detail-panel-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.detail-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+.comment-list,
+.comment-form {
+  display: grid;
+  gap: 10px;
+}
+
+.comment-card,
+.search-result-row {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.search-result-row {
+  color: inherit;
+  margin-top: 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.search-results-panel {
+  border-color: #bfdbfe;
+}
+
+.client-preview-panel {
+  border-color: #bfdbfe;
+}
+
 table {
   border-collapse: collapse;
   min-width: 1040px;
@@ -880,11 +1080,19 @@ td span {
     flex-direction: column;
   }
 
+  .project-header-actions,
+  .top-header-actions {
+    justify-content: flex-start;
+  }
+
   .metrics-grid,
   .page-grid.two,
   .page-grid.three,
   .page-grid.four,
-  .dashboard-grid {
+  .dashboard-grid,
+  .filter-row,
+  .inline-create-form,
+  .detail-form {
     grid-template-columns: 1fr;
   }
 

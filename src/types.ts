@@ -107,12 +107,14 @@ export type PaymentLog = {
 
 export type PaymentLogInput = Omit<PaymentLog, "id" | "createdAt">;
 
+export type UserRole = "admin" | "project_manager" | "contributor" | "client" | "viewer";
+
 export type User = {
   id: string;
   organizationId: string;
   name: string;
   email: string;
-  role: "owner" | "admin" | "project_manager" | "operations" | "client";
+  role: UserRole;
   avatarInitials: string;
 };
 
@@ -183,6 +185,15 @@ export type Task = {
   completedAt: string | null;
 };
 
+export type TaskComment = {
+  id: string;
+  taskId: string;
+  authorId: string;
+  body: string;
+  visibility: "internal" | "client";
+  createdAt: string;
+};
+
 export type TaskDependency = {
   id: string;
   taskId: string;
@@ -200,6 +211,14 @@ export type ProjectRisk = {
   mitigationPlan: string;
 };
 
+export type Milestone = {
+  id: string;
+  projectId: string;
+  name: string;
+  date: string;
+  status: "planned" | "at_risk" | "complete";
+};
+
 export type ProjectDocument = {
   id: string;
   projectId: string;
@@ -210,6 +229,15 @@ export type ProjectDocument = {
   createdAt: string;
 };
 
+export type ProjectMetric = {
+  id: string;
+  projectId: string;
+  label: string;
+  value: number;
+  suffix: string;
+  tone: "success" | "warning" | "danger" | "info";
+};
+
 export type ProjectActivityEvent = {
   id: string;
   projectId: string;
@@ -218,4 +246,20 @@ export type ProjectActivityEvent = {
   message: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+};
+
+export type ProjectState = {
+  users: User[];
+  clients: Client[];
+  projects: Project[];
+  projectMembers: ProjectMember[];
+  phases: Phase[];
+  milestones: Milestone[];
+  tasks: Task[];
+  taskDependencies: TaskDependency[];
+  taskComments: TaskComment[];
+  risks: ProjectRisk[];
+  documents: ProjectDocument[];
+  metrics: ProjectMetric[];
+  activityEvents: ProjectActivityEvent[];
 };

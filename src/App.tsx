@@ -13,6 +13,7 @@ import {
   Settings,
   Users
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { AdminPage } from "./pages/AdminPage";
 import { CustomerOrderPage } from "./pages/CustomerOrderPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -30,6 +31,17 @@ import { PaymentCancelPage } from "./pages/PaymentCancelPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
 import { SystemTestsPage } from "./pages/SystemTestsPage";
 import { TestPage } from "./pages/TestPage";
+import {
+  canEditProjects,
+  canManageProjects,
+  GlobalSearchResults,
+  NewTaskForm,
+  ProjectSelector,
+  TaskDetailPanel
+} from "./components/project/ProjectWidgets";
+import { demoRoles } from "./data/projectMockData";
+import { loadProjectState, saveProjectState } from "./data/projectStore";
+import type { ProjectRisk, ProjectState, Task, UserRole } from "./types";
 import accelLogo from "../Accel_GOH_Logo.png";
 
 const navItems = [
@@ -46,39 +58,53 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings }
 ];
 
-function getRoute() {
+export type ProjectPageProps = {
+  projectState: ProjectState;
+  selectedProjectId: string;
+  role: UserRole;
+  canEdit: boolean;
+  canManage: boolean;
+  clientPreview: boolean;
+  onOpenTask: (taskId: string) => void;
+  onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
+  onCreateTask: (task: Omit<Task, "id" | "completedAt">) => void;
+  onAddRisk: (risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) => void;
+  onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
+};
+
+function getRoute(props: ProjectPageProps) {
   const path = window.location.pathname;
 
   if (path === "/") {
-    return <DashboardPage />;
+    return <DashboardPage {...props} />;
   }
 
   if (path === "/projects") {
-    return <ProjectsPage />;
+    return <ProjectsPage {...props} />;
   }
 
   if (path === "/tasks") {
-    return <TasksPage />;
+    return <TasksPage {...props} />;
   }
 
   if (path === "/timeline") {
-    return <TimelinePage />;
+    return <TimelinePage {...props} />;
   }
 
   if (path === "/messages") {
-    return <MessagesPage />;
+    return <MessagesPage {...props} />;
   }
 
   if (path === "/clients") {
-    return <ClientsPage />;
+    return <ClientsPage {...props} />;
   }
 
   if (path === "/documents") {
-    return <DocumentsPage />;
+    return <DocumentsPage {...props} />;
   }
 
   if (path === "/metrics") {
-    return <MetricsPage />;
+    return <MetricsPage {...props} />;
   }
 
   if (path === "/billing") {
@@ -86,7 +112,7 @@ function getRoute() {
   }
 
   if (path === "/settings") {
-    return <SettingsPage />;
+    return <SettingsPage {...props} />;
   }
 
   if (path === "/system-tests") {
@@ -109,7 +135,7 @@ function getRoute() {
     return <PaymentCancelPage />;
   }
 
-  return <DashboardPage />;
+  return <DashboardPage {...props} />;
 }
 
 function isActiveRoute(href: string) {
@@ -148,30 +174,64 @@ function Sidebar() {
         })}
       </nav>
       <div className="sidebar-footer">
-        <span>Operations Mode</span>
-        <strong>Billing, email, SMS, and payments preserved</strong>
+        <span>Prototype Mode</span>
+        <strong>Local task, risk, role, and client-preview changes persist in this browser.</strong>
       </div>
     </aside>
   );
 }
 
-function TopHeader() {
+function TopHeader({
+  role,
+  onRoleChange,
+  searchQuery,
+  onSearchChange,
+  clientPreview,
+  onClientPreviewChange
+}: {
+  role: UserRole;
+  onRoleChange: (role: UserRole) => void;
+  searchQuery: string;
+  onSearchChange: (value: string) => void;
+  clientPreview: boolean;
+  onClientPreviewChange: (value: boolean) => void;
+}) {
+  const selectedRole = demoRoles.find((item) => item.role === role);
+  const initials = role === "client" ? "DW" : role === "admin" ? "ER" : role === "contributor" ? "MT" : role === "viewer" ? "VL" : "SJ";
+  const displayName = role === "client" ? "Dana Whitfield" : role === "admin" ? "Elena Rivera" : role === "contributor" ? "Marcus Turner" : role === "viewer" ? "Victor Lee" : "Sarah Jenkins";
+
   return (
     <header className="top-header">
       <label className="search-box" aria-label="Search">
         <Search size={18} aria-hidden="true" />
-        <input placeholder="Search tasks, files, projects, or people..." />
+        <input
+          placeholder="Search tasks, files, projects, or people..."
+          value={searchQuery}
+          onChange={(event) => onSearchChange(event.target.value)}
+        />
       </label>
       <div className="top-header-actions">
+        <label className="compact-field role-field">
+          Role
+          <select value={role} onChange={(event) => onRoleChange(event.target.value as UserRole)}>
+            {demoRoles.map((item) => (
+              <option key={item.role} value={item.role}>{item.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="toggle-field">
+          <input type="checkbox" checked={clientPreview} onChange={(event) => onClientPreviewChange(event.target.checked)} />
+          Client-safe preview
+        </label>
         <button className="icon-button" type="button" aria-label="Notifications">
           <Bell size={18} aria-hidden="true" />
           <span className="notification-dot" />
         </button>
         <div className="user-chip">
-          <span className="user-avatar">SJ</span>
+          <span className="user-avatar">{initials}</span>
           <span>
-            <strong>Sarah Jenkins</strong>
-            <small>Program Director</small>
+            <strong>{displayName}</strong>
+            <small>{selectedRole?.label ?? "Project Manager"}</small>
           </span>
         </div>
       </div>
@@ -179,39 +239,272 @@ function TopHeader() {
   );
 }
 
-function ProjectHeader() {
+function ProjectHeader({
+  projectState,
+  selectedProjectId,
+  onProjectChange,
+  canEdit,
+  onNewTask
+}: {
+  projectState: ProjectState;
+  selectedProjectId: string;
+  onProjectChange: (projectId: string) => void;
+  canEdit: boolean;
+  onNewTask: () => void;
+}) {
+  const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
+  const client = projectState.clients.find((item) => item.id === project.clientId);
+  const owner = projectState.users.find((item) => item.id === project.ownerId);
+  const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+  const completeTasks = tasks.filter((task) => task.status === "done").length;
+  const progress = tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0;
+
   return (
     <section className="project-header">
       <div>
-        <p className="eyebrow">Hampton Economic Development</p>
+        <p className="eyebrow">{client?.name ?? "Client"}</p>
         <div className="project-title-row">
-          <h1>City of Hampton - Demographic & Workforce Analysis</h1>
-          <span className="status-badge warning">At Risk</span>
+          <h1>{project.name}</h1>
+          <span className={`status-badge ${project.health === "at_risk" ? "warning" : "success"}`}>
+            {project.health.replace("_", " ")}
+          </span>
         </div>
-        <p>Sarah Jenkins owns delivery. Draft development is active with client data dependencies under review.</p>
+        <p>{owner?.name ?? "Project owner"} owns delivery. {completeTasks}/{tasks.length} tasks complete.</p>
         <div className="progress-track">
-          <span style={{ width: "68%" }} />
+          <span style={{ width: `${progress}%` }} />
         </div>
       </div>
-      <button className="action-button" type="button">
-        <Plus size={18} aria-hidden="true" />
-        New Task
-      </button>
+      <div className="project-header-actions">
+        <ProjectSelector
+          clients={projectState.clients}
+          projects={projectState.projects}
+          selectedProjectId={selectedProjectId}
+          onProjectChange={onProjectChange}
+        />
+        {canEdit ? (
+          <button className="action-button" type="button" onClick={onNewTask}>
+            <Plus size={18} aria-hidden="true" />
+            New Task
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }
 
 export function App() {
+  const [projectState, setProjectState] = useState(loadProjectState);
+  const [selectedProjectId, setSelectedProjectId] = useState(() => (
+    window.localStorage.getItem("accelprojects.selectedProjectId") ?? projectState.projects[0]?.id ?? ""
+  ));
+  const [role, setRole] = useState<UserRole>(() => (window.localStorage.getItem("accelprojects.role") as UserRole) ?? "project_manager");
+  const [clientPreview, setClientPreview] = useState(() => window.localStorage.getItem("accelprojects.clientPreview") === "true");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
+  const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+
+  const selectedProject = projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
+  const projectPhases = useMemo(
+    () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id),
+    [projectState.phases, selectedProject?.id]
+  );
+  const projectTasks = useMemo(
+    () => projectState.tasks.filter((task) => task.projectId === selectedProject?.id),
+    [projectState.tasks, selectedProject?.id]
+  );
+  const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId) : undefined;
+  const editable = canEditProjects(role) && !clientPreview;
+  const manageable = canManageProjects(role) && !clientPreview;
+
+  useEffect(() => {
+    saveProjectState(projectState);
+  }, [projectState]);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      window.localStorage.setItem("accelprojects.selectedProjectId", selectedProjectId);
+    }
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("accelprojects.role", role);
+  }, [role]);
+
+  useEffect(() => {
+    window.localStorage.setItem("accelprojects.clientPreview", String(clientPreview));
+  }, [clientPreview]);
+
+  function updateTask(taskId: string, updates: Partial<Task>) {
+    setProjectState((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => {
+        if (task.id !== taskId) {
+          return task;
+        }
+
+        const nextStatus = updates.status ?? task.status;
+
+        return {
+          ...task,
+          ...updates,
+          completedAt: nextStatus === "done" ? task.completedAt ?? new Date().toISOString() : null
+        };
+      })
+    }));
+  }
+
+  function createTask(task: Omit<Task, "id" | "completedAt">) {
+    const newTask: Task = {
+      ...task,
+      id: `task_${Date.now()}`,
+      completedAt: task.status === "done" ? new Date().toISOString() : null
+    };
+
+    setProjectState((current) => ({
+      ...current,
+      tasks: [newTask, ...current.tasks],
+      activityEvents: [
+        {
+          id: `event_${Date.now()}`,
+          projectId: task.projectId,
+          actorId: "user_sarah",
+          type: "task_created",
+          message: `Task created: ${task.title}`,
+          metadata: { taskId: newTask.id },
+          createdAt: new Date().toISOString()
+        },
+        ...current.activityEvents
+      ]
+    }));
+    setSelectedTaskId(newTask.id);
+    setShowNewTaskForm(false);
+  }
+
+  function addTaskComment(taskId: string, body: string) {
+    const task = projectState.tasks.find((item) => item.id === taskId);
+
+    if (!task) {
+      return;
+    }
+
+    setProjectState((current) => ({
+      ...current,
+      taskComments: [
+        {
+          id: `comment_${Date.now()}`,
+          taskId,
+          authorId: role === "client" ? "user_dana" : "user_sarah",
+          body,
+          visibility: role === "client" ? "client" : "internal",
+          createdAt: new Date().toISOString()
+        },
+        ...current.taskComments
+      ],
+      activityEvents: [
+        {
+          id: `event_${Date.now()}`,
+          projectId: task.projectId,
+          actorId: role === "client" ? "user_dana" : "user_sarah",
+          type: "task_note_added",
+          message: `Note added to ${task.title}`,
+          metadata: { taskId },
+          createdAt: new Date().toISOString()
+        },
+        ...current.activityEvents
+      ]
+    }));
+  }
+
+  function addRisk(risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) {
+    if (!selectedProject) {
+      return;
+    }
+
+    setProjectState((current) => ({
+      ...current,
+      risks: [
+        {
+          id: `risk_${Date.now()}`,
+          projectId: selectedProject.id,
+          ...risk
+        },
+        ...current.risks
+      ]
+    }));
+  }
+
+  function updateRisk(riskId: string, updates: Partial<ProjectRisk>) {
+    setProjectState((current) => ({
+      ...current,
+      risks: current.risks.map((risk) => risk.id === riskId ? { ...risk, ...updates } : risk)
+    }));
+  }
+
+  const pageProps: ProjectPageProps = {
+    projectState,
+    selectedProjectId: selectedProject?.id ?? selectedProjectId,
+    role,
+    canEdit: editable,
+    canManage: manageable,
+    clientPreview,
+    onOpenTask: setSelectedTaskId,
+    onUpdateTask: updateTask,
+    onCreateTask: createTask,
+    onAddRisk: addRisk,
+    onUpdateRisk: updateRisk
+  };
+
   return (
     <div className="app-shell">
       <Sidebar />
       <div className="main-shell">
-        <TopHeader />
+        <TopHeader
+          role={role}
+          onRoleChange={setRole}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          clientPreview={clientPreview}
+          onClientPreviewChange={setClientPreview}
+        />
         <main className="content-area">
-          <ProjectHeader />
-          {getRoute()}
+          <ProjectHeader
+            projectState={projectState}
+            selectedProjectId={selectedProject?.id ?? selectedProjectId}
+            onProjectChange={setSelectedProjectId}
+            canEdit={editable}
+            onNewTask={() => setShowNewTaskForm(true)}
+          />
+          <GlobalSearchResults
+            query={searchQuery}
+            tasks={projectTasks}
+            documents={projectState.documents.filter((document) => document.projectId === selectedProject?.id)}
+            users={projectState.users}
+            onOpenTask={setSelectedTaskId}
+          />
+          {showNewTaskForm && selectedProject ? (
+            <NewTaskForm
+              projectId={selectedProject.id}
+              phases={projectPhases}
+              users={projectState.users}
+              onCreateTask={createTask}
+              onCancel={() => setShowNewTaskForm(false)}
+            />
+          ) : null}
+          {getRoute(pageProps)}
         </main>
       </div>
+      {selectedTask ? (
+        <TaskDetailPanel
+          task={selectedTask}
+          phases={projectState.phases}
+          users={projectState.users}
+          comments={projectState.taskComments.filter((comment) => comment.taskId === selectedTask.id)}
+          canEdit={editable}
+          onClose={() => setSelectedTaskId(undefined)}
+          onUpdateTask={updateTask}
+          onAddComment={addTaskComment}
+        />
+      ) : null}
     </div>
   );
 }

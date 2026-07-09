@@ -1,38 +1,35 @@
-import { FileText, Filter, Folder, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
+import { FileText, Filter, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
-  mockClients,
-  mockPhases,
-  mockProjectActivityEvents,
-  mockProjectDocuments,
-  mockProjects,
-  mockTasks,
-  mockTeamCapacity,
-  mockUsers
-} from "../data/projectMockData";
+  ActivityFeed,
+  ClientPortalPreview,
+  DocumentHub,
+  MetricCard,
+  RiskRegister,
+  StatusBadge,
+  TaskTable,
+  TimelineSection
+} from "../components/project/ProjectWidgets";
+import type { ProjectPageProps } from "../App";
 import type { Task } from "../types";
 
-const statusLabels: Record<Task["status"], string> = {
-  done: "Complete",
-  in_progress: "In Progress",
-  waiting_on_client: "Waiting on Client",
-  blocked: "Blocked",
-  not_started: "Not Started",
-  todo: "Not Started"
-};
-
-function userName(userId: string | null) {
-  return mockUsers.find((user) => user.id === userId)?.name ?? "Unassigned";
+function projectSlices(projectState: ProjectPageProps["projectState"], projectId: string) {
+  return {
+    project: projectState.projects.find((project) => project.id === projectId) ?? projectState.projects[0],
+    client: projectState.clients.find((client) => client.id === projectState.projects.find((project) => project.id === projectId)?.clientId),
+    phases: projectState.phases.filter((phase) => phase.projectId === projectId),
+    tasks: projectState.tasks.filter((task) => task.projectId === projectId),
+    risks: projectState.risks.filter((risk) => risk.projectId === projectId),
+    documents: projectState.documents.filter((document) => document.projectId === projectId),
+    metrics: projectState.metrics.filter((metric) => metric.projectId === projectId),
+    events: projectState.activityEvents.filter((event) => event.projectId === projectId),
+    dependencies: projectState.taskDependencies.filter((dependency) => (
+      projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
+    ))
+  };
 }
 
-function phaseName(phaseId: string) {
-  return mockPhases.find((phase) => phase.id === phaseId)?.name ?? "Unassigned";
-}
-
-function formatDate(date: string) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-export function ProjectsPage() {
+export function ProjectsPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
   return (
     <div className="page-stack">
       <section className="panel">
@@ -41,34 +38,50 @@ export function ProjectsPage() {
             <h1>Projects</h1>
             <p>Portfolio view for active client delivery work.</p>
           </div>
-          <button className="action-button" type="button">
-            <Plus size={18} aria-hidden="true" />
-            New Project
-          </button>
+          {!clientPreview ? (
+            <button className="action-button" type="button">
+              <Plus size={18} aria-hidden="true" />
+              New Project
+            </button>
+          ) : null}
         </div>
         <div className="project-list">
-          {mockProjects.map((project) => (
-            <article className="project-row project-card" key={project.id}>
-              <div>
-                <p className="eyebrow">{mockClients.find((client) => client.id === project.clientId)?.name}</p>
-                <h2>{project.name}</h2>
-                <p>{project.summary}</p>
-              </div>
-              <div className="project-card-meta">
-                <span className={`status-badge ${project.health === "at_risk" ? "warning" : "success"}`}>
-                  {project.health.replace("_", " ")}
-                </span>
-                <strong>{formatDate(project.targetDate)}</strong>
-              </div>
-            </article>
-          ))}
+          {projectState.projects.map((project) => {
+            const client = projectState.clients.find((item) => item.id === project.clientId);
+            const taskCount = projectState.tasks.filter((task) => task.projectId === project.id).length;
+
+            return (
+              <article className={project.id === selectedProjectId ? "project-row project-card selected" : "project-row project-card"} key={project.id}>
+                <div>
+                  <p className="eyebrow">{client?.name}</p>
+                  <h2>{project.name}</h2>
+                  <p>{project.summary}</p>
+                </div>
+                <div className="project-card-meta">
+                  <StatusBadge label={project.health.replace("_", " ")} tone={project.health === "at_risk" ? "warning" : "success"} />
+                  <strong>{taskCount} tasks</strong>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
     </div>
   );
 }
 
-export function TasksPage() {
+export function TasksPage({ projectState, selectedProjectId, canEdit, onOpenTask, onUpdateTask }: ProjectPageProps) {
+  const { phases, tasks } = projectSlices(projectState, selectedProjectId);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [phaseFilter, setPhaseFilter] = useState("all");
+
+  const filteredTasks = useMemo(() => tasks.filter((task) => (
+    (statusFilter === "all" || task.status === statusFilter)
+    && (ownerFilter === "all" || task.assigneeId === ownerFilter)
+    && (phaseFilter === "all" || task.phaseId === phaseFilter)
+  )), [ownerFilter, phaseFilter, statusFilter, tasks]);
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -79,58 +92,57 @@ export function TasksPage() {
         <div className="button-row">
           <button className="secondary-button" type="button">
             <Filter size={18} aria-hidden="true" />
-            Filter
+            Filters Active
           </button>
           <button className="secondary-button" type="button">
             <SlidersHorizontal size={18} aria-hidden="true" />
-            Sort
+            Sort: Due Date
           </button>
         </div>
       </div>
-      <div className="table-wrap">
-        <table className="task-table">
-          <thead>
-            <tr>
-              <th>Task Name</th>
-              <th>Phase</th>
-              <th>Assignee</th>
-              <th>Due Date</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockTasks.map((task) => (
-              <tr key={task.id}>
-                <td>
-                  <strong>{task.title}</strong>
-                  <span>{task.description}</span>
-                </td>
-                <td>{phaseName(task.phaseId)}</td>
-                <td>{userName(task.assigneeId)}</td>
-                <td>{formatDate(task.dueDate)}</td>
-                <td>
-                  <span className={`status-badge status-${task.status}`}>{statusLabels[task.status]}</span>
-                </td>
-                <td>
-                  <button className="link-button" type="button">Open</button>
-                </td>
-              </tr>
+      <div className="filter-row">
+        <label>
+          Status
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All statuses</option>
+            {["done", "in_progress", "waiting_on_client", "blocked", "not_started"].map((status) => (
+              <option key={status} value={status}>{status.replaceAll("_", " ")}</option>
             ))}
-          </tbody>
-        </table>
+          </select>
+        </label>
+        <label>
+          Owner
+          <select value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)}>
+            <option value="all">All owners</option>
+            {projectState.users.filter((user) => user.role !== "client").map((user) => (
+              <option key={user.id} value={user.id}>{user.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Phase
+          <select value={phaseFilter} onChange={(event) => setPhaseFilter(event.target.value)}>
+            <option value="all">All phases</option>
+            {phases.map((phase) => (
+              <option key={phase.id} value={phase.id}>{phase.name}</option>
+            ))}
+          </select>
+        </label>
       </div>
+      <TaskTable
+        tasks={filteredTasks}
+        phases={phases}
+        users={projectState.users}
+        canEdit={canEdit}
+        onOpenTask={onOpenTask}
+        onUpdateTask={onUpdateTask}
+      />
     </section>
   );
 }
 
-export function TimelinePage() {
-  const phases = [
-    { name: "Data Collection", start: "Jun 15", end: "Jul 5", width: "24%", offset: "0%" },
-    { name: "Draft Development", start: "Jul 6", end: "Jul 31", width: "34%", offset: "22%" },
-    { name: "Review", start: "Aug 1", end: "Aug 16", width: "22%", offset: "58%" },
-    { name: "Final Delivery", start: "Aug 17", end: "Aug 30", width: "18%", offset: "82%" }
-  ];
+export function TimelinePage({ projectState, selectedProjectId }: ProjectPageProps) {
+  const { project, phases, tasks, dependencies } = projectSlices(projectState, selectedProjectId);
 
   return (
     <section className="panel">
@@ -140,58 +152,35 @@ export function TimelinePage() {
           <p>Milestone view for phase sequencing and dependency planning.</p>
         </div>
       </div>
-      <div className="timeline-placeholder">
-        <div className="timeline-dates">
-          <span>Jun 15</span>
-          <span>Jul 1</span>
-          <span>Jul 15</span>
-          <span>Aug 1</span>
-          <span>Aug 15</span>
-          <span>Aug 30</span>
-        </div>
-        {phases.map((phase) => (
-          <div className="timeline-row" key={phase.name}>
-            <strong>{phase.name}</strong>
-            <div className="timeline-track">
-              <span style={{ marginLeft: phase.offset, width: phase.width }}>
-                {phase.start} - {phase.end}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-      <p className="panel-note">Dependency-aware Gantt engine will be added after real task dependencies are stored.</p>
+      <TimelineSection project={project} phases={phases} tasks={tasks} dependencies={dependencies} />
+      <p className="panel-note">Dependency-aware Gantt engine will be replaced with a production scheduler after real task dependencies are stored.</p>
     </section>
   );
 }
 
-export function MessagesPage() {
+export function MessagesPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
+  const { events } = projectSlices(projectState, selectedProjectId);
+
   return (
     <section className="panel">
       <div className="panel-header">
         <div>
           <h1>Project Messages</h1>
-          <p>Visual foundation for project communications connected to the existing email logging service.</p>
+          <p>Activity and communication history connected to the future project messaging layer.</p>
         </div>
-        <button className="action-button" type="button">
-          <Mail size={18} aria-hidden="true" />
-          Send Project Update
-        </button>
+        {!clientPreview ? (
+          <button className="action-button" type="button">
+            <Mail size={18} aria-hidden="true" />
+            Send Project Update
+          </button>
+        ) : null}
       </div>
-      <div className="page-grid three">
-        {mockProjectActivityEvents.map((event) => (
-          <article className="message-card" key={event.id}>
-            <span className="status-badge info">{event.type.replaceAll("_", " ")}</span>
-            <h2>{event.message}</h2>
-            <p>{new Date(event.createdAt).toLocaleString()}</p>
-          </article>
-        ))}
-      </div>
+      <ActivityFeed events={events} users={projectState.users} clientPreview={clientPreview} />
     </section>
   );
 }
 
-export function ClientsPage() {
+export function ClientsPage({ projectState }: ProjectPageProps) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -212,13 +201,13 @@ export function ClientsPage() {
             </tr>
           </thead>
           <tbody>
-            {mockClients.map((client) => (
+            {projectState.clients.map((client) => (
               <tr key={client.id}>
                 <td><strong>{client.name}</strong></td>
-                <td>{mockProjects.filter((project) => project.clientId === client.id).length}</td>
+                <td>{projectState.projects.filter((project) => project.clientId === client.id).length}</td>
                 <td>{client.contactName}</td>
                 <td>Jul 9, 2026</td>
-                <td><span className="status-badge success">{client.status}</span></td>
+                <td><StatusBadge label={client.status} tone={client.status === "active" ? "success" : "info"} /></td>
               </tr>
             ))}
           </tbody>
@@ -228,8 +217,8 @@ export function ClientsPage() {
   );
 }
 
-export function DocumentsPage() {
-  const folders = ["Client Deliverables", "Source Data", "Reports", "Contracts & Billing"];
+export function DocumentsPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
+  const { documents } = projectSlices(projectState, selectedProjectId);
 
   return (
     <section className="panel">
@@ -238,32 +227,20 @@ export function DocumentsPage() {
           <h1>Document Hub</h1>
           <p>Project files, deliverables, reports, and billing documents.</p>
         </div>
-        <button className="action-button" type="button">
-          <Upload size={18} aria-hidden="true" />
-          Upload
-        </button>
+        {!clientPreview ? (
+          <button className="action-button" type="button">
+            <Upload size={18} aria-hidden="true" />
+            Upload
+          </button>
+        ) : null}
       </div>
-      <div className="page-grid four">
-        {folders.map((folder) => (
-          <article className="document-card" key={folder}>
-            <Folder size={28} aria-hidden="true" />
-            <h2>{folder}</h2>
-            <p>{mockProjectDocuments.length} linked item{mockProjectDocuments.length === 1 ? "" : "s"}</p>
-          </article>
-        ))}
-      </div>
+      <DocumentHub documents={documents} users={projectState.users} />
     </section>
   );
 }
 
-export function MetricsPage() {
-  const metrics = [
-    { label: "Project completion", value: 68, tone: "info" },
-    { label: "Overdue work", value: 18, tone: "danger" },
-    { label: "Budget hours", value: 75, tone: "warning" },
-    { label: "Client response delays", value: 42, tone: "warning" },
-    { label: "Team workload", value: 86, tone: "info" }
-  ];
+export function MetricsPage({ projectState, selectedProjectId }: ProjectPageProps) {
+  const { metrics } = projectSlices(projectState, selectedProjectId);
 
   return (
     <section className="panel">
@@ -275,39 +252,57 @@ export function MetricsPage() {
       </div>
       <div className="page-grid two">
         {metrics.map((metric) => (
-          <article className="metric-card" key={metric.label}>
-            <span>{metric.label}</span>
-            <strong>{metric.value}%</strong>
-            <div className="capacity-bar">
-              <span className={metric.tone} style={{ width: `${metric.value}%` }} />
-            </div>
-          </article>
+          <MetricCard metric={metric} key={metric.id} />
         ))}
       </div>
     </section>
   );
 }
 
-export function SettingsPage() {
+export function SettingsPage({ role }: ProjectPageProps) {
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <div>
-          <h1>Settings</h1>
-          <p>Workspace, organization, notification, and integration settings will be configured in a later phase.</p>
+    <div className="page-stack">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Settings</h1>
+            <p>Workspace, organization, notification, and integration settings will be configured in a later phase.</p>
+          </div>
         </div>
-      </div>
-      <div className="page-grid three">
-        {["Workspace Profile", "Team Access", "Integration Controls"].map((item) => (
-          <article className="document-card" key={item}>
-            <FileText size={24} aria-hidden="true" />
-            <h2>{item}</h2>
-            <p>Configuration placeholder</p>
-          </article>
-        ))}
-      </div>
-    </section>
+        <div className="page-grid three">
+          {["Workspace Profile", "Team Access", "Integration Controls"].map((item) => (
+            <article className="document-card" key={item}>
+              <FileText size={24} aria-hidden="true" />
+              <h2>{item}</h2>
+              <p>{role === "admin" ? "Admin editable in a future phase" : "Read-only in this role"}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Prototype Data</h2>
+            <p>Clear local project-management edits and reload the original mock dataset.</p>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem("accelprojects.projectState.v1");
+              window.location.reload();
+            }}
+          >
+            Reset Prototype Data
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
-export { mockTeamCapacity };
+export function ClientPreviewPage({ projectState, selectedProjectId }: ProjectPageProps) {
+  const { project, tasks, documents } = projectSlices(projectState, selectedProjectId);
+
+  return <ClientPortalPreview project={project} tasks={tasks} documents={documents} />;
+}
