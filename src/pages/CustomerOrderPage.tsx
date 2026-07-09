@@ -17,6 +17,12 @@ export function CustomerOrderPage() {
 
   return (
     <div className="page-stack">
+      <section className="panel module-page-header">
+        <div>
+          <h1>Billing</h1>
+          <p>Orders, payments, and project billing events</p>
+        </div>
+      </section>
       <OrderForm onSaved={() => loadOrders()} />
       <OrderTable orders={orders} />
     </div>

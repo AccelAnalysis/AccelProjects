@@ -1,4 +1,4 @@
-# Mini Billing Messenger Learning Project
+# AccelProjects Learning Project
 
 Goal:
 Build a simple customer order app that teaches API integration one feature at a time.

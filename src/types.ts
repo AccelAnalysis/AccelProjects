@@ -106,3 +106,116 @@ export type PaymentLog = {
 };
 
 export type PaymentLogInput = Omit<PaymentLog, "id" | "createdAt">;
+
+export type User = {
+  id: string;
+  organizationId: string;
+  name: string;
+  email: string;
+  role: "owner" | "admin" | "project_manager" | "operations" | "client";
+  avatarInitials: string;
+};
+
+export type Organization = {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+};
+
+export type Client = {
+  id: string;
+  organizationId: string;
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  status: "lead" | "active" | "paused" | "archived";
+};
+
+export type Project = {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  name: string;
+  summary: string;
+  status: "planning" | "active" | "paused" | "complete" | "archived";
+  health: "on_track" | "at_risk" | "blocked";
+  priority: "low" | "medium" | "high" | "urgent";
+  startDate: string;
+  targetDate: string;
+  budget: number;
+  currency: string;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectMember = {
+  id: string;
+  projectId: string;
+  userId: string;
+  role: "sponsor" | "lead" | "contributor" | "observer";
+};
+
+export type Phase = {
+  id: string;
+  projectId: string;
+  name: string;
+  status: "planned" | "active" | "complete" | "blocked";
+  startDate: string;
+  endDate: string;
+  sortOrder: number;
+};
+
+export type Task = {
+  id: string;
+  projectId: string;
+  phaseId: string;
+  title: string;
+  description: string;
+  status: "not_started" | "todo" | "in_progress" | "waiting_on_client" | "blocked" | "done";
+  priority: "low" | "medium" | "high" | "urgent";
+  assigneeId: string | null;
+  startDate: string;
+  dueDate: string;
+  estimateHours: number;
+  completedAt: string | null;
+};
+
+export type TaskDependency = {
+  id: string;
+  taskId: string;
+  dependsOnTaskId: string;
+  type: "finish_to_start" | "start_to_start" | "finish_to_finish";
+};
+
+export type ProjectRisk = {
+  id: string;
+  projectId: string;
+  title: string;
+  severity: "low" | "medium" | "high" | "critical";
+  probability: "low" | "medium" | "high";
+  status: "monitoring" | "mitigating" | "resolved";
+  mitigationPlan: string;
+};
+
+export type ProjectDocument = {
+  id: string;
+  projectId: string;
+  title: string;
+  type: "brief" | "contract" | "technical_note" | "deliverable" | "other";
+  url: string;
+  ownerId: string;
+  createdAt: string;
+};
+
+export type ProjectActivityEvent = {
+  id: string;
+  projectId: string;
+  actorId: string;
+  type: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};

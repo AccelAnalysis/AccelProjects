@@ -55,12 +55,12 @@ export function TestPage() {
   const [resultMessage, setResultMessage] = useState("");
   const [microsoftEmailForm, setMicrosoftEmailForm] = useState({
     to: "",
-    subject: "Mini Billing Messenger Microsoft 365 Test",
+    subject: "AccelProjects Microsoft 365 Test",
     body: "This is a test email sent through Microsoft Graph."
   });
   const [twilioSmsForm, setTwilioSmsForm] = useState({
     to: "",
-    message: "Mini Billing Messenger Twilio SMS test.",
+    message: "AccelProjects Twilio SMS test.",
     smsConsent: true
   });
 
@@ -134,7 +134,7 @@ export function TestPage() {
       setLatestOrder(orderForSms);
       const result = await sendMockTestSms({
         to: orderForSms.phone,
-        message: "Mini Billing Messenger mock SMS test.",
+        message: "AccelProjects mock SMS test.",
         orderId: orderForSms.id,
         smsConsent: orderForSms.smsConsent
       });
@@ -316,7 +316,7 @@ export function TestPage() {
   function useMissingTwilioPhone() {
     setTwilioSmsForm({
       to: "",
-      message: "Mini Billing Messenger Twilio SMS test.",
+      message: "AccelProjects Twilio SMS test.",
       smsConsent: true
     });
     setResultMessage("Missing phone loaded. Click Send Twilio Test SMS to test failed logging.");
@@ -325,7 +325,7 @@ export function TestPage() {
   function useInvalidTwilioPhone() {
     setTwilioSmsForm({
       to: "not-a-phone-number",
-      message: "Mini Billing Messenger Twilio SMS test.",
+      message: "AccelProjects Twilio SMS test.",
       smsConsent: true
     });
     setResultMessage("Invalid phone loaded. Click Send Twilio Test SMS to test failed logging.");
@@ -334,7 +334,7 @@ export function TestPage() {
   function useTwilioConsentFalse() {
     setTwilioSmsForm({
       to: "+15555555555",
-      message: "Mini Billing Messenger Twilio SMS test.",
+      message: "AccelProjects Twilio SMS test.",
       smsConsent: false
     });
     setResultMessage("SMS consent false loaded. Click Send Twilio Test SMS to test skipped logging.");

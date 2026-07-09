@@ -264,7 +264,7 @@ export function sendMockTestEmail() {
     method: "POST",
     body: JSON.stringify({
       to: "test@example.com",
-      subject: "Mini Billing Messenger Mock Email Test",
+      subject: "AccelProjects Mock Email Test",
       body: "This is a mock email test."
     })
   });
