@@ -1,30 +1,29 @@
-import { initialProjectState } from "./projectMockData";
-import type { ProjectState } from "../types";
+import type { UserRole } from "../types";
 
-const storageKey = "accelprojects.projectState.v1";
+const selectedProjectKey = "accelprojects.selectedProjectId";
+const roleKey = "accelprojects.role";
+const clientPreviewKey = "accelprojects.clientPreview";
 
-export function loadProjectState(): ProjectState {
-  try {
-    const storedState = window.localStorage.getItem(storageKey);
-
-    if (!storedState) {
-      return initialProjectState;
-    }
-
-    return {
-      ...initialProjectState,
-      ...JSON.parse(storedState)
-    };
-  } catch {
-    return initialProjectState;
-  }
+export function loadSelectedProjectId() {
+  return window.localStorage.getItem(selectedProjectKey) ?? "";
 }
 
-export function saveProjectState(state: ProjectState) {
-  window.localStorage.setItem(storageKey, JSON.stringify(state));
+export function saveSelectedProjectId(projectId: string) {
+  window.localStorage.setItem(selectedProjectKey, projectId);
 }
 
-export function resetProjectState() {
-  window.localStorage.removeItem(storageKey);
-  return initialProjectState;
+export function loadSelectedRole(): UserRole {
+  return (window.localStorage.getItem(roleKey) as UserRole | null) ?? "project_manager";
+}
+
+export function saveSelectedRole(role: UserRole) {
+  window.localStorage.setItem(roleKey, role);
+}
+
+export function loadClientPreview() {
+  return window.localStorage.getItem(clientPreviewKey) === "true";
+}
+
+export function saveClientPreview(enabled: boolean) {
+  window.localStorage.setItem(clientPreviewKey, String(enabled));
 }
