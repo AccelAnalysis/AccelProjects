@@ -32,6 +32,26 @@ export function addDays(dateOnly: string, days: number) {
   return toDateOnly(date);
 }
 
+export function addMonths(dateOnly: string, months: number) {
+  const date = parseDateOnly(dateOnly);
+
+  if (!date) {
+    return todayDateOnly();
+  }
+
+  const originalDay = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const month = date.getUTCMonth();
+  date.setUTCDate(originalDay);
+
+  if (date.getUTCMonth() !== month) {
+    date.setUTCDate(0);
+  }
+
+  return toDateOnly(date);
+}
+
 export function daysBetween(startDate: string, endDate: string) {
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
@@ -51,4 +71,32 @@ export function formatDateOnly(value: string, options: Intl.DateTimeFormatOption
   }
 
   return date.toLocaleDateString(undefined, { timeZone: "UTC", ...options });
+}
+
+export function compareDateOnly(left: string | null | undefined, right: string | null | undefined) {
+  if (!isDateOnly(left) && !isDateOnly(right)) {
+    return 0;
+  }
+
+  if (!isDateOnly(left)) {
+    return 1;
+  }
+
+  if (!isDateOnly(right)) {
+    return -1;
+  }
+
+  return left.localeCompare(right);
+}
+
+export function clampDateOnly(value: string, startDate: string, endDate: string) {
+  if (value < startDate) {
+    return startDate;
+  }
+
+  if (value > endDate) {
+    return endDate;
+  }
+
+  return value;
 }

@@ -364,6 +364,125 @@ export async function updateTaskInFirestore(taskId: string, updates: Partial<Tas
   await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, safeTaskId), updates);
 }
 
+export async function updateTaskScheduleInFirestore(
+  taskId: string,
+  updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId">
+) {
+  await updateTaskInFirestore(taskId, updates);
+}
+
+export async function batchUpdateTaskSchedulesInFirestore(
+  updates: Array<{ taskId: string; updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId" | "assigneeId" | "status" | "priority"> }>
+) {
+  const state = await loadProjectStateForCurrentUser();
+  const batch = writeBatch(requireDb());
+
+  updates.forEach((item) => {
+    const task = state.tasks.find((candidate) => candidate.id === requirePathSegment(item.taskId, "taskId"));
+
+    if (!task) {
+      throw new Error(`Task ${item.taskId} was not found in Firestore.`);
+    }
+
+    batch.update(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, task.id), item.updates);
+  });
+
+  await batch.commit();
+}
+
+export async function createMilestoneInFirestore(milestone: Omit<Milestone, "id">) {
+  const newMilestone: Milestone = {
+    ...milestone,
+    id: createId("milestone")
+  };
+
+  await writeDocument([...projectPath(requirePathSegment(newMilestone.projectId, "milestone.projectId")), projectCollectionMap.milestones], newMilestone);
+  return newMilestone;
+}
+
+export async function updateMilestoneInFirestore(milestoneId: string, updates: Partial<Milestone>) {
+  const safeMilestoneId = requirePathSegment(milestoneId, "milestoneId");
+  const state = await loadProjectStateForCurrentUser();
+  const milestone = state.milestones.find((item) => item.id === safeMilestoneId);
+
+  if (!milestone) {
+    throw new Error(`Milestone ${safeMilestoneId} was not found in Firestore.`);
+  }
+
+  await updateDoc(doc(requireDb(), ...projectPath(milestone.projectId), projectCollectionMap.milestones, safeMilestoneId), updates);
+}
+
+export async function deleteMilestoneInFirestore(milestoneId: string) {
+  const safeMilestoneId = requirePathSegment(milestoneId, "milestoneId");
+  const state = await loadProjectStateForCurrentUser();
+  const milestone = state.milestones.find((item) => item.id === safeMilestoneId);
+
+  if (!milestone) {
+    throw new Error(`Milestone ${safeMilestoneId} was not found in Firestore.`);
+  }
+
+  await deleteDoc(doc(requireDb(), ...projectPath(milestone.projectId), projectCollectionMap.milestones, safeMilestoneId));
+}
+
+export async function createTaskDependencyInFirestore(dependency: Omit<TaskDependency, "id">) {
+  const state = await loadProjectStateForCurrentUser();
+  const task = state.tasks.find((item) => item.id === requirePathSegment(dependency.taskId, "dependency.taskId"));
+  const predecessor = state.tasks.find((item) => item.id === requirePathSegment(dependency.dependsOnTaskId, "dependency.dependsOnTaskId"));
+
+  if (!task || !predecessor) {
+    throw new Error("Both dependency tasks must exist.");
+  }
+
+  if (task.projectId !== predecessor.projectId) {
+    throw new Error("Dependencies cannot cross projects.");
+  }
+
+  const newDependency: TaskDependency = {
+    ...dependency,
+    id: createId("dependency")
+  };
+
+  await writeDocument([...projectPath(task.projectId), projectCollectionMap.taskDependencies], newDependency);
+  return newDependency;
+}
+
+export async function updateTaskDependencyInFirestore(dependencyId: string, updates: Partial<TaskDependency>) {
+  const safeDependencyId = requirePathSegment(dependencyId, "dependencyId");
+  const state = await loadProjectStateForCurrentUser();
+  const dependency = state.taskDependencies.find((item) => item.id === safeDependencyId);
+  const task = dependency ? state.tasks.find((item) => item.id === dependency.taskId) : undefined;
+
+  if (!dependency || !task) {
+    throw new Error(`Dependency ${safeDependencyId} was not found in Firestore.`);
+  }
+
+  await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.taskDependencies, safeDependencyId), updates);
+}
+
+export async function deleteTaskDependencyInFirestore(dependencyId: string) {
+  const safeDependencyId = requirePathSegment(dependencyId, "dependencyId");
+  const state = await loadProjectStateForCurrentUser();
+  const dependency = state.taskDependencies.find((item) => item.id === safeDependencyId);
+  const task = dependency ? state.tasks.find((item) => item.id === dependency.taskId) : undefined;
+
+  if (!dependency || !task) {
+    throw new Error(`Dependency ${safeDependencyId} was not found in Firestore.`);
+  }
+
+  await deleteDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.taskDependencies, safeDependencyId));
+}
+
+export async function createScheduleActivityEventInFirestore(event: Omit<ProjectActivityEvent, "id" | "createdAt">) {
+  const newEvent: ProjectActivityEvent = {
+    ...event,
+    id: createId("event"),
+    createdAt: new Date().toISOString()
+  };
+
+  await writeDocument([...projectPath(requirePathSegment(newEvent.projectId, "activityEvent.projectId")), projectCollectionMap.activityEvents], newEvent);
+  return newEvent;
+}
+
 export async function addTaskCommentInFirestore(taskId: string, comment: Omit<TaskComment, "id" | "taskId" | "createdAt">) {
   const safeTaskId = requirePathSegment(taskId, "taskId");
   const state = await loadProjectStateForCurrentUser();

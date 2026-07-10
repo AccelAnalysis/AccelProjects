@@ -181,8 +181,9 @@ export type Task = {
   status: "not_started" | "todo" | "in_progress" | "waiting_on_client" | "blocked" | "done";
   priority: "low" | "medium" | "high" | "urgent";
   assigneeId: string | null;
-  startDate: string;
-  dueDate: string;
+  startDate: string | null;
+  dueDate: string | null;
+  sortOrder?: number;
   estimateHours: number;
   completedAt: string | null;
 };

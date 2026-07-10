@@ -29,9 +29,11 @@ import type {
 } from "../../types";
 import { mockTeamCapacity } from "../../data/projectMockData";
 import { addDays, formatDateOnly, todayDateOnly } from "../../utils/dateOnly";
+import { compareDateOnly } from "../../utils/dateOnly";
 import { getPhaseSequenceLabel, sortPhases } from "../../utils/phaseOrdering";
 import { calculateScheduleRange } from "../../utils/scheduleRange";
 import { generateTimelineTicks, timelinePercent } from "../../utils/timelineTicks";
+import { getTaskScheduleState, isScheduledTask } from "../../scheduling/scheduleDates";
 
 export const taskStatusLabels: Record<Task["status"], string> = {
   done: "Complete",
@@ -42,8 +44,8 @@ export const taskStatusLabels: Record<Task["status"], string> = {
   todo: "Not Started"
 };
 
-export function formatDate(date: string) {
-  return formatDateOnly(date);
+export function formatDate(date: string | null | undefined) {
+  return date ? formatDateOnly(date) : "Unscheduled";
 }
 
 export function getUserName(users: User[], userId: string | null) {
@@ -221,8 +223,8 @@ export function TaskTable({
                   {taskCanEdit ? (
                     <input
                       type="date"
-                      value={task.dueDate}
-                      onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value })}
+                      value={task.dueDate ?? ""}
+                      onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value || null })}
                     />
                   ) : (
                     formatDate(task.dueDate)
@@ -334,8 +336,17 @@ export function TaskDetailPanel({
           <input
             disabled={!canEdit}
             type="date"
-            value={task.dueDate}
-            onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value })}
+            value={task.dueDate ?? ""}
+            onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value || null })}
+          />
+        </label>
+        <label>
+          Start Date
+          <input
+            disabled={!canEdit}
+            type="date"
+            value={task.startDate ?? ""}
+            onChange={(event) => onUpdateTask(task.id, { startDate: event.target.value || null })}
           />
         </label>
         <label>
@@ -583,7 +594,7 @@ function timelineTone(task: Task) {
     return "danger";
   }
 
-  if (task.dueDate < today) {
+  if (task.dueDate && task.dueDate < today) {
     return "warning";
   }
 
@@ -613,8 +624,8 @@ export function TimelineSection({
 }) {
   const orderedPhases = sortPhases(phases);
   const orderedTasks = [...tasks].sort((left, right) => (
-    left.startDate.localeCompare(right.startDate)
-    || left.dueDate.localeCompare(right.dueDate)
+    compareDateOnly(left.startDate, right.startDate)
+    || compareDateOnly(left.dueDate, right.dueDate)
     || left.title.localeCompare(right.title)
   ));
   const range = calculateScheduleRange(project, orderedPhases, orderedTasks);
@@ -711,6 +722,20 @@ export function TimelineSection({
             }
 
             const task = row.task;
+            if (!isScheduledTask(task)) {
+              return (
+                <div className="gantt-row task-gantt-row" key={`task-${task.id}`}>
+                  <div className="gantt-cell gantt-left-cell">
+                    <button className="gantt-name-button task-name-button" type="button" onClick={() => onOpenTask?.(task.id)} title={task.title}>
+                      <span>{task.title}</span>
+                      <small>{getTaskScheduleState(task)}</small>
+                    </button>
+                  </div>
+                  <div className="gantt-cell gantt-row-track">Unscheduled</div>
+                </div>
+              );
+            }
+
             const start = timelinePercent(task.startDate, range);
             const end = timelinePercent(task.dueDate, range);
             const dependency = dependencies.find((item) => item.taskId === task.id);

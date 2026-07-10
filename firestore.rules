@@ -29,6 +29,45 @@ service cloud.firestore {
         && signedInUserRole(organizationId) in ["admin", "project_manager"];
     }
 
+    function isProjectManagerRole(organizationId) {
+      return isOrgMember(organizationId)
+        && signedInUserRole(organizationId) == "project_manager";
+    }
+
+    function isContributorRole(organizationId) {
+      return isOrgMember(organizationId)
+        && signedInUserRole(organizationId) == "contributor";
+    }
+
+    function projectData(organizationId, projectId) {
+      return get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)).data;
+    }
+
+    function isProjectOwnerManager(organizationId, projectId) {
+      return isProjectManagerRole(organizationId)
+        && projectData(organizationId, projectId).ownerId == request.auth.uid;
+    }
+
+    function canManageProjectSchedule(organizationId, projectId) {
+      return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId);
+    }
+
+    function canContributorUpdateAssignedTask(organizationId) {
+      return isContributorRole(organizationId)
+        && resource.data.assigneeId == request.auth.uid
+        && request.resource.data.assigneeId == resource.data.assigneeId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status",
+          "priority",
+          "startDate",
+          "dueDate",
+          "completedAt",
+          "updatedAt"
+        ]);
+    }
+
     function isOwnBootstrapProfile(organizationId, userId) {
       return isSignedIn()
         && isAccelOrg(organizationId)
@@ -55,8 +94,9 @@ service cloud.firestore {
       }
 
       match /clients/{clientId} {
-        // TODO: replace broad org-member writes with role-aware server checks.
-        allow read, write: if isOrgMember(organizationId);
+        allow read: if isOrgMember(organizationId);
+        allow create, update: if canWriteProjectData(organizationId);
+        allow delete: if isAdmin(organizationId);
       }
 
       match /imports/{importId} {
@@ -68,19 +108,29 @@ service cloud.firestore {
       }
 
       match /projects/{projectId} {
-        // TODO: use canWriteProjectData plus assigned-project membership checks for writes.
-        allow read, write: if isOrgMember(organizationId);
+        allow read: if isOrgMember(organizationId);
+        allow create: if canWriteProjectData(organizationId);
+        allow update: if canManageProjectSchedule(organizationId, projectId);
+        allow delete: if isAdmin(organizationId);
 
         match /members/{memberId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /phases/{phaseId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /tasks/{taskId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow delete: if canManageProjectSchedule(organizationId, projectId);
+          allow update: if canManageProjectSchedule(organizationId, projectId)
+            || canContributorUpdateAssignedTask(organizationId);
 
           match /comments/{commentId} {
             allow read, write: if isOrgMember(organizationId);
@@ -88,27 +138,39 @@ service cloud.firestore {
         }
 
         match /taskDependencies/{dependencyId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /risks/{riskId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /documents/{documentId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /metrics/{metricId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /milestones/{milestoneId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /activityEvents/{eventId} {
-          allow read, write: if isOrgMember(organizationId);
+          allow read: if isOrgMember(organizationId);
+          allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if false;
         }
       }
     }

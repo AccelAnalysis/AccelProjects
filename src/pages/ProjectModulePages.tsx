@@ -1,4 +1,4 @@
-import { CalendarDays, FileText, Filter, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
+import { FileText, Filter, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   ActivityFeed,
@@ -8,15 +8,16 @@ import {
   StatusBadge,
   SummaryMetricCard,
   TaskTable,
-  TimelineSection,
   formatDate,
   taskStatusLabels
 } from "../components/project/ProjectWidgets";
+import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
 import { buildProjectImportPath, buildProjectPath } from "../routing/projectRoutes";
 import type { Task } from "../types";
 import { todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
+import { compareDateOnly } from "../utils/dateOnly";
 
 function projectSlices(projectState: ProjectPageProps["projectState"], projectId: string) {
   const project = projectState.projects.find((item) => item.id === projectId);
@@ -42,7 +43,7 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
 function projectStats(tasks: Task[]) {
   const today = todayDateOnly();
   const completeTasks = tasks.filter((task) => task.status === "done").length;
-  const overdueTasks = tasks.filter((task) => task.status !== "done" && task.dueDate < today).length;
+  const overdueTasks = tasks.filter((task) => task.status !== "done" && Boolean(task.dueDate && task.dueDate < today)).length;
 
   return {
     completeTasks,
@@ -52,17 +53,6 @@ function projectStats(tasks: Task[]) {
     progress: tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0
   };
 }
-
-function hasPlanFilters(filters: PlanFilters) {
-  return Boolean(filters.search.trim() || filters.phaseId !== "all" || filters.status !== "all" || filters.assigneeId !== "all");
-}
-
-type PlanFilters = {
-  search: string;
-  phaseId: string;
-  status: string;
-  assigneeId: string;
-};
 
 export function ProjectsPage({ projectState, selectedProjectId, canManage, canViewInternal, onNavigate }: ProjectPageProps) {
   return (
@@ -144,43 +134,25 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
   );
 }
 
-export function PlanPage({ projectState, selectedProjectId, onOpenTask }: ProjectPageProps) {
-  const { project, phases, tasks, dependencies } = projectSlices(projectState, selectedProjectId);
-  const [filters, setFilters] = useState<PlanFilters>({ search: "", phaseId: "all", status: "all", assigneeId: "all" });
-  const collapseKey = `plan-collapse-${selectedProjectId}`;
-  const [collapsedPhaseIds, setCollapsedPhaseIds] = useState<Set<string>>(() => new Set(JSON.parse(window.sessionStorage.getItem(collapseKey) ?? "[]") as string[]));
-  const activeFilters = hasPlanFilters(filters);
-
-  const visibleTasks = useMemo(() => {
-    const query = filters.search.trim().toLowerCase();
-    return tasks.filter((task) => (
-      (!query || `${task.title} ${task.description}`.toLowerCase().includes(query))
-      && (filters.phaseId === "all" || task.phaseId === filters.phaseId)
-      && (filters.status === "all" || task.status === filters.status)
-      && (filters.assigneeId === "all" || (filters.assigneeId === "__unassigned" ? task.assigneeId === null : task.assigneeId === filters.assigneeId))
-    ));
-  }, [filters, tasks]);
-  const visiblePhaseIds = new Set(visibleTasks.map((task) => task.phaseId));
-  const visiblePhases = activeFilters ? phases.filter((phase) => visiblePhaseIds.has(phase.id)) : phases;
-
-  function storeCollapsed(next: Set<string>) {
-    window.sessionStorage.setItem(collapseKey, JSON.stringify([...next]));
-    setCollapsedPhaseIds(next);
-  }
-
-  function clearFilters() {
-    setFilters({ search: "", phaseId: "all", status: "all", assigneeId: "all" });
-  }
-
-  function scrollToToday() {
-    const marker = document.querySelector<HTMLElement>(".gantt-today-line");
-    marker?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-  }
-
-  function fitProject() {
-    document.querySelector<HTMLElement>(".gantt-scroll")?.scrollTo({ left: 0, behavior: "smooth" });
-  }
-
+export function PlanPage(props: ProjectPageProps) {
+  const {
+    projectState,
+    selectedProjectId,
+    canManageSchedule,
+    canCreateTasks,
+    canEditTask,
+    onOpenTask,
+    onCreateTask,
+    onUpdateTaskSchedule,
+    onBatchUpdateTaskSchedules,
+    onCreateMilestone,
+    onUpdateMilestone,
+    onDeleteMilestone,
+    onCreateDependency,
+    onUpdateDependency,
+    onDeleteDependency
+  } = props;
+  const { project, phases, tasks, milestones, dependencies } = projectSlices(projectState, selectedProjectId);
   if (!project) {
     return <ProjectUnavailable />;
   }
@@ -194,73 +166,26 @@ export function PlanPage({ projectState, selectedProjectId, onOpenTask }: Projec
           <p>Phase sequence, task timing, and delivery context for the selected project.</p>
         </div>
       </div>
-      <div className="plan-toolbar">
-        <label>
-          Search tasks
-          <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Title or description" />
-        </label>
-        <label>
-          Phase
-          <select value={filters.phaseId} onChange={(event) => setFilters({ ...filters, phaseId: event.target.value })}>
-            <option value="all">All phases</option>
-            {phases.map((phase, index) => (
-              <option key={phase.id} value={phase.id}>{index + 1}. {phase.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-            <option value="all">All statuses</option>
-            {Object.entries(taskStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label>
-          Assignee
-          <select value={filters.assigneeId} onChange={(event) => setFilters({ ...filters, assigneeId: event.target.value })}>
-            <option value="all">All assignees</option>
-            <option value="__unassigned">Unassigned</option>
-            {projectState.users.filter((user) => user.role !== "client").map((user) => (
-              <option key={user.id} value={user.id}>{user.name}</option>
-            ))}
-          </select>
-        </label>
-        <div className="button-row plan-toolbar-actions">
-          <button className="secondary-button" type="button" onClick={scrollToToday}>
-            <CalendarDays size={16} aria-hidden="true" />
-            Today
-          </button>
-          <button className="secondary-button" type="button" onClick={fitProject}>Fit Project</button>
-          <button className="secondary-button" type="button" onClick={() => storeCollapsed(new Set())}>Expand All</button>
-          <button className="secondary-button" type="button" onClick={() => storeCollapsed(new Set(phases.map((phase) => phase.id)))}>Collapse All</button>
-          {activeFilters ? <button className="link-button" type="button" onClick={clearFilters}>Clear Filters</button> : null}
-        </div>
-      </div>
-      {activeFilters ? (
-        <div className="active-filter-row">
-          <Filter size={16} aria-hidden="true" />
-          <span>{visibleTasks.length} matching task{visibleTasks.length === 1 ? "" : "s"}</span>
-        </div>
-      ) : null}
-      {phases.length === 0 ? <div className="table-empty">This project has no phases yet.</div> : null}
-      {phases.length > 0 && tasks.length === 0 ? <div className="table-empty">This project has phases but no tasks yet.</div> : null}
-      {activeFilters && visibleTasks.length === 0 ? <div className="table-empty">No tasks match the current Plan filters.</div> : null}
-      <TimelineSection
+      <PlanWorkspace
         project={project}
-        phases={visiblePhases}
-        tasks={visibleTasks}
+        phases={phases}
+        tasks={tasks}
+        milestones={milestones}
         dependencies={dependencies}
-        collapsedPhaseIds={collapsedPhaseIds}
-        onTogglePhase={(phaseId) => {
-          const next = new Set(collapsedPhaseIds);
-          if (next.has(phaseId)) {
-            next.delete(phaseId);
-          } else {
-            next.add(phaseId);
-          }
-          storeCollapsed(next);
-        }}
+        users={projectState.users}
+        canManageSchedule={canManageSchedule}
+        canCreateTasks={canCreateTasks}
+        canEditTask={canEditTask}
         onOpenTask={onOpenTask}
+        onCreateTask={onCreateTask}
+        onUpdateTaskSchedule={onUpdateTaskSchedule}
+        onBatchUpdateTaskSchedules={onBatchUpdateTaskSchedules}
+        onCreateMilestone={onCreateMilestone}
+        onUpdateMilestone={onUpdateMilestone}
+        onDeleteMilestone={onDeleteMilestone}
+        onCreateDependency={onCreateDependency}
+        onUpdateDependency={onUpdateDependency}
+        onDeleteDependency={onDeleteDependency}
       />
     </section>
   );
@@ -342,12 +267,31 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
   const [statusFilter, setStatusFilter] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [phaseFilter, setPhaseFilter] = useState("all");
+  const [sortMode, setSortMode] = useState("dueDate");
 
-  const filteredTasks = useMemo(() => tasks.filter((task) => (
-    (statusFilter === "all" || task.status === statusFilter)
-    && (ownerFilter === "all" || task.assigneeId === ownerFilter)
-    && (phaseFilter === "all" || task.phaseId === phaseFilter)
-  )), [ownerFilter, phaseFilter, statusFilter, tasks]);
+  const filtersActive = statusFilter !== "all" || ownerFilter !== "all" || phaseFilter !== "all";
+  const filteredTasks = useMemo(() => tasks
+    .filter((task) => (
+      (statusFilter === "all" || task.status === statusFilter)
+      && (ownerFilter === "all" || task.assigneeId === ownerFilter)
+      && (phaseFilter === "all" || task.phaseId === phaseFilter)
+    ))
+    .sort((left, right) => {
+      if (sortMode === "phase") {
+        return left.phaseId.localeCompare(right.phaseId) || compareDateOnly(left.dueDate, right.dueDate);
+      }
+
+      if (sortMode === "priority") {
+        const priorityRank = { urgent: 0, high: 1, medium: 2, low: 3 };
+        return priorityRank[left.priority] - priorityRank[right.priority] || compareDateOnly(left.dueDate, right.dueDate);
+      }
+
+      if (sortMode === "status") {
+        return left.status.localeCompare(right.status) || compareDateOnly(left.dueDate, right.dueDate);
+      }
+
+      return compareDateOnly(left.dueDate, right.dueDate) || left.title.localeCompare(right.title);
+    }), [ownerFilter, phaseFilter, sortMode, statusFilter, tasks]);
 
   return (
     <section className="panel">
@@ -357,13 +301,22 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
           <p>Execution board for phase-level ownership, due dates, and blockers.</p>
         </div>
         <div className="button-row">
-          <button className="secondary-button" type="button">
+          <button className="secondary-button" type="button" disabled={!filtersActive}>
             <Filter size={18} aria-hidden="true" />
-            Filters Active
+            {filtersActive ? "Filters Active" : "No Filters"}
           </button>
-          <button className="secondary-button" type="button">
+          <label className="compact-field">
+            Sort
+            <select value={sortMode} onChange={(event) => setSortMode(event.target.value)}>
+              <option value="dueDate">Due Date</option>
+              <option value="phase">Phase</option>
+              <option value="priority">Priority</option>
+              <option value="status">Status</option>
+            </select>
+          </label>
+          <button className="secondary-button" type="button" disabled>
             <SlidersHorizontal size={18} aria-hidden="true" />
-            Sort: Due Date
+            {filteredTasks.length} tasks
           </button>
         </div>
       </div>
@@ -559,7 +512,7 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
               const user = projectState.users.find((item) => item.id === member.userId);
               const assigned = tasks.filter((task) => task.assigneeId === member.userId);
               const open = assigned.filter((task) => task.status !== "done");
-              const overdue = open.filter((task) => task.dueDate < today);
+              const overdue = open.filter((task) => task.dueDate && task.dueDate < today);
 
               return (
                 <tr key={member.id}>
