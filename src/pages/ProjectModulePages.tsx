@@ -29,7 +29,7 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
   };
 }
 
-export function ProjectsPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
+export function ProjectsPage({ projectState, selectedProjectId, canManage, canViewInternal }: ProjectPageProps) {
   return (
     <div className="page-stack">
       <section className="panel">
@@ -38,7 +38,7 @@ export function ProjectsPage({ projectState, selectedProjectId, clientPreview }:
             <h1>Projects</h1>
             <p>Portfolio view for active client delivery work.</p>
           </div>
-          {!clientPreview ? (
+          {canManage && canViewInternal ? (
             <button className="action-button" type="button">
               <Plus size={18} aria-hidden="true" />
               New Project
@@ -70,7 +70,7 @@ export function ProjectsPage({ projectState, selectedProjectId, clientPreview }:
   );
 }
 
-export function TasksPage({ projectState, selectedProjectId, canEdit, onOpenTask, onUpdateTask }: ProjectPageProps) {
+export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTask, onOpenTask, onUpdateTask }: ProjectPageProps) {
   const { phases, tasks } = projectSlices(projectState, selectedProjectId);
   const [statusFilter, setStatusFilter] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -134,6 +134,7 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, onOpenTask
         phases={phases}
         users={projectState.users}
         canEdit={canEdit}
+        canEditTask={canEditTask}
         onOpenTask={onOpenTask}
         onUpdateTask={onUpdateTask}
       />
@@ -158,7 +159,7 @@ export function TimelinePage({ projectState, selectedProjectId }: ProjectPagePro
   );
 }
 
-export function MessagesPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
+export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal }: ProjectPageProps) {
   const { events } = projectSlices(projectState, selectedProjectId);
 
   return (
@@ -168,7 +169,7 @@ export function MessagesPage({ projectState, selectedProjectId, clientPreview }:
           <h1>Project Messages</h1>
           <p>Activity and communication history connected to the future project messaging layer.</p>
         </div>
-        {!clientPreview ? (
+        {canViewInternal ? (
           <button className="action-button" type="button">
             <Mail size={18} aria-hidden="true" />
             Send Project Update
@@ -217,7 +218,7 @@ export function ClientsPage({ projectState }: ProjectPageProps) {
   );
 }
 
-export function DocumentsPage({ projectState, selectedProjectId, clientPreview }: ProjectPageProps) {
+export function DocumentsPage({ projectState, selectedProjectId, clientPreview, canEditDocuments }: ProjectPageProps) {
   const { documents } = projectSlices(projectState, selectedProjectId);
 
   return (
@@ -227,7 +228,7 @@ export function DocumentsPage({ projectState, selectedProjectId, clientPreview }
           <h1>Document Hub</h1>
           <p>Project files, deliverables, reports, and billing documents.</p>
         </div>
-        {!clientPreview ? (
+        {canEditDocuments && !clientPreview ? (
           <button className="action-button" type="button">
             <Upload size={18} aria-hidden="true" />
             Upload
@@ -239,8 +240,21 @@ export function DocumentsPage({ projectState, selectedProjectId, clientPreview }
   );
 }
 
-export function MetricsPage({ projectState, selectedProjectId }: ProjectPageProps) {
+export function MetricsPage({ projectState, selectedProjectId, canViewInternal }: ProjectPageProps) {
   const { metrics } = projectSlices(projectState, selectedProjectId);
+
+  if (!canViewInternal) {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Metrics & Reports</h1>
+            <p>Client-safe project reporting is available from the project overview.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="panel">

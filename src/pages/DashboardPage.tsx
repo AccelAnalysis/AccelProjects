@@ -15,7 +15,8 @@ export function DashboardPage({
   onOpenTask,
   onAddRisk,
   onUpdateRisk,
-  canManage
+  canManageRisks,
+  canViewInternal
 }: ProjectPageProps) {
   const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
   const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
@@ -26,6 +27,14 @@ export function DashboardPage({
   const documents = projectState.documents.filter((document) => document.projectId === project.id);
   const metrics = projectState.metrics.filter((metric) => metric.projectId === project.id);
   const completeTasks = tasks.filter((task) => task.status === "done").length;
+
+  if (!canViewInternal) {
+    return (
+      <div className="page-stack">
+        <ClientPortalPreview project={project} tasks={tasks} documents={documents} />
+      </div>
+    );
+  }
 
   return (
     <div className="page-stack">
@@ -75,7 +84,7 @@ export function DashboardPage({
       </section>
 
       {!clientPreview ? (
-        <RiskRegister risks={risks} canManage={canManage} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} />
+        <RiskRegister risks={risks} canManage={canManageRisks} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} />
       ) : null}
     </div>
   );

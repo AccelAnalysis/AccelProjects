@@ -14,6 +14,7 @@ AccelProjects is a high-fidelity project-management platform prototype with Fire
 ## What Is Interactive Now
 
 - Switch active projects from the project context header.
+- Import validated AccelProjects Project Package JSON through `/projects/import`.
 - Search tasks, files, and people.
 - Filter tasks by status, owner, and phase.
 - Create tasks with a simple form.
@@ -30,6 +31,34 @@ AccelProjects is a high-fidelity project-management platform prototype with Fire
 ## Firebase Setup
 
 Copy `.env.example` to `.env`, fill in the `VITE_FIREBASE_*` values for the `accelprojects` Firebase project, and restart Vite. If these values are missing, the app shows a setup message instead of a blank screen.
+
+## Project Imports
+
+AccelProjects supports a preview-first project import workflow for structured project packages from any source, including AI-generated project plans, manually prepared JSON packages, converted project documentation, planning conversations, requirements documents, repository analysis, and future supported conversion tools. Import files must be strict JSON using package type `accelprojects.project` and schema version `1.0`; accepted file extensions are `.json` and `.accelproject.json`.
+
+Workflow:
+
+1. Open `/projects/import`.
+2. Paste package JSON or choose a package file up to 2 MB.
+3. Validate the package schema and relationship rules.
+4. Review client matching, people matching, proposed counts, warnings, and preview tables.
+5. Resolve the project owner to an existing AccelProjects user.
+6. Check the explicit approval box.
+7. Import the package into Firestore.
+
+Validation checks required fields, supported enum values, date formats, numeric values, unique keys and aliases, missing references, duplicate dependencies, circular dependencies, and date ordering. Fatal errors block import. Warnings remain visible in the preview and import manifest.
+
+Client matching supports `match_or_create` only. Existing clients are matched by exact normalized email first, then exact normalized name. People are matched to existing AccelProjects users by exact normalized email or manual selection. Imports do not create Firebase Authentication users, fake users, update existing projects, merge data, replace data, or delete records.
+
+Every import creates an audit manifest at `organizations/org_accel_projects/imports/{importId}`. The manifest records package ID, source hash, project/client IDs, generated entity mappings, counts, user, timestamps, status, warnings, and error details. Completed or processing manifests with the same package ID or source hash block duplicate imports by default.
+
+The sample fixture is at `src/imports/fixtures/sampleProjectImport.json`. Use the Import Project page or the Import Package Tests section on System Tests to load, validate, preview, optionally write, reload, and duplicate-check the sample project package. Before importing the first production project package, validate it through the preview workflow and confirm the target users and clients are correct.
+
+Run import unit tests with:
+
+```bash
+npm test
+```
 
 ## Backend/API Work Needed Next
 

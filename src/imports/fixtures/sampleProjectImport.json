@@ -1,0 +1,190 @@
+{
+  "schemaVersion": "1.0",
+  "packageType": "accelprojects.project",
+  "packageId": "fixture-community-analytics-launch-2026-07-10",
+  "source": {
+    "name": "Community Analytics Launch Fixture",
+    "description": "Small fictional AccelProjects import package for validator, planner, and manual import testing.",
+    "generatedAt": "2026-07-10T12:00:00.000Z",
+    "references": [
+      "Internal kickoff notes",
+      "Client intake worksheet"
+    ]
+  },
+  "client": {
+    "externalKey": "client-civic-labs",
+    "matchMode": "match_or_create",
+    "name": "Civic Labs Cooperative",
+    "contactName": "Nora Patel",
+    "email": "nora@civiclabs.example",
+    "phone": "+15555551020",
+    "status": "lead"
+  },
+  "project": {
+    "externalKey": "project-neighborhood-insights",
+    "name": "Neighborhood Insights Launch",
+    "summary": "Build a lightweight launch plan for a neighborhood analytics reporting workspace.",
+    "status": "planning",
+    "health": "on_track",
+    "priority": "medium",
+    "startDate": "2026-08-03",
+    "targetDate": "2026-09-04",
+    "budget": 18500,
+    "currency": "usd",
+    "ownerAlias": "pm"
+  },
+  "people": [
+    {
+      "alias": "pm",
+      "name": "Sarah Jenkins",
+      "email": "sarah@example.com",
+      "organizationRole": "project_manager",
+      "projectRole": "lead",
+      "matchMode": "match_by_email"
+    },
+    {
+      "alias": "analyst",
+      "name": "Jordan Blake",
+      "email": "jordan@civiclabs.example",
+      "organizationRole": "contributor",
+      "projectRole": "contributor",
+      "matchMode": "manual"
+    }
+  ],
+  "phases": [
+    {
+      "key": "discovery",
+      "name": "Discovery",
+      "status": "planned",
+      "startDate": "2026-08-03",
+      "endDate": "2026-08-14",
+      "sortOrder": 1
+    },
+    {
+      "key": "build",
+      "name": "Build and Review",
+      "status": "planned",
+      "startDate": "2026-08-17",
+      "endDate": "2026-09-04",
+      "sortOrder": 2
+    }
+  ],
+  "milestones": [
+    {
+      "key": "kickoff-complete",
+      "name": "Kickoff complete",
+      "date": "2026-08-07",
+      "status": "planned"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "confirm-scope",
+      "phaseKey": "discovery",
+      "title": "Confirm reporting scope",
+      "description": "Review intended user groups, reporting cadence, and launch priorities.",
+      "status": "not_started",
+      "priority": "high",
+      "assigneeAlias": "pm",
+      "startDate": "2026-08-03",
+      "dueDate": "2026-08-07",
+      "estimateHours": 4,
+      "dependencies": []
+    },
+    {
+      "key": "inventory-data",
+      "phaseKey": "discovery",
+      "title": "Inventory sample datasets",
+      "description": "List available CSV exports and identify quality concerns before build starts.",
+      "status": "todo",
+      "priority": "medium",
+      "assigneeAlias": "analyst",
+      "startDate": "2026-08-06",
+      "dueDate": "2026-08-12",
+      "estimateHours": 6,
+      "dependencies": [
+        {
+          "dependsOnTaskKey": "confirm-scope",
+          "type": "finish_to_start"
+        }
+      ]
+    },
+    {
+      "key": "prototype-reporting-views",
+      "phaseKey": "build",
+      "title": "Prototype reporting views",
+      "description": "Create a first-pass reporting structure with sample metrics and review notes.",
+      "status": "not_started",
+      "priority": "medium",
+      "assigneeAlias": null,
+      "startDate": "2026-08-17",
+      "dueDate": "2026-08-28",
+      "estimateHours": 12,
+      "dependencies": [
+        {
+          "dependsOnTaskKey": "inventory-data",
+          "type": "finish_to_start"
+        }
+      ]
+    },
+    {
+      "key": "client-review",
+      "phaseKey": "build",
+      "title": "Run client review",
+      "description": "Walk Civic Labs through prototype decisions and capture launch adjustments.",
+      "status": "not_started",
+      "priority": "high",
+      "assigneeAlias": "pm",
+      "startDate": "2026-08-31",
+      "dueDate": "2026-09-04",
+      "estimateHours": 5,
+      "dependencies": [
+        {
+          "dependsOnTaskKey": "prototype-reporting-views",
+          "type": "finish_to_start"
+        }
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "key": "risk-data-quality",
+      "title": "Sample data quality may delay review",
+      "severity": "medium",
+      "probability": "medium",
+      "status": "monitoring",
+      "mitigationPlan": "Confirm source data owner and request replacement exports before the build phase."
+    }
+  ],
+  "documents": [
+    {
+      "key": "doc-kickoff-notes",
+      "title": "Kickoff Notes",
+      "type": "brief",
+      "url": "",
+      "ownerAlias": "pm"
+    }
+  ],
+  "metrics": [
+    {
+      "key": "metric-readiness",
+      "label": "Launch readiness",
+      "value": 15,
+      "suffix": "%",
+      "tone": "info"
+    },
+    {
+      "key": "metric-open-decisions",
+      "label": "Open decisions",
+      "value": 4,
+      "suffix": "",
+      "tone": "warning"
+    }
+  ],
+  "assumptions": [
+    "The client can provide sample data before the build phase starts."
+  ],
+  "warnings": [
+    "The analyst person is intentionally manual-match only for import preview testing."
+  ]
+}

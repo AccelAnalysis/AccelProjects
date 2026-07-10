@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
+import { canUseAdminPreview, getUserRole } from "../auth/permissions";
 import { auth, db, isFirebaseConfigured } from "../firebase";
 import {
   addTaskCommentInFirestore,
@@ -7,21 +8,29 @@ import {
   createTaskInFirestore,
   ensureFirestoreUserProfile,
   getFirestorePermissionMessage,
+  loadCurrentUserProfileFromFirestore,
   loadProjectStateFromFirestore,
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
   updateRiskInFirestore,
   updateTaskInFirestore
 } from "../data/firestoreProjectStore";
+import { checkProjectImportDuplicate, importProjectPackageToFirestore } from "../data/firestoreProjectImportStore";
 import { initialProjectState } from "../data/projectMockData";
-import type { ProjectRisk, ProjectState, Task } from "../types";
+import { createProjectImportPlan, createProjectImportSourceHash } from "../imports/projectImportPlanner";
+import { validateProjectImportPackage } from "../imports/projectImportValidator";
+import sampleProjectImport from "../imports/fixtures/sampleProjectImport.json";
+import type { ProjectRisk, ProjectState, Task, User } from "../types";
 
 export function SystemTestsPage() {
   const { user } = useAuth();
   const [firestoreState, setFirestoreState] = useState<ProjectState | undefined>();
+  const [firestoreUserProfile, setFirestoreUserProfile] = useState<User | undefined>();
   const [firestoreTestTaskId, setFirestoreTestTaskId] = useState("");
   const [firestoreTestRiskId, setFirestoreTestRiskId] = useState("");
   const [firebaseResultMessage, setFirebaseResultMessage] = useState("");
+  const [importTestMessage, setImportTestMessage] = useState("");
+  const effectiveRole = getUserRole(firestoreUserProfile);
 
   async function runFirebaseTest(action: () => Promise<void>) {
     try {
@@ -36,9 +45,13 @@ export function SystemTestsPage() {
       throw new Error("Sign in before running Firestore tests.");
     }
 
-    const state = await loadProjectStateFromFirestore(user);
+    const [profile, state] = await Promise.all([
+      loadCurrentUserProfileFromFirestore(user),
+      loadProjectStateFromFirestore(user)
+    ]);
+    setFirestoreUserProfile(profile);
     setFirestoreState(state);
-    setFirebaseResultMessage(`Loaded ${state.projects.length} projects and ${state.tasks.length} tasks from Firestore`);
+    setFirebaseResultMessage(`Loaded ${state.projects.length} projects and ${state.tasks.length} tasks from Firestore as ${profile.role}`);
     return state;
   }
 
@@ -115,6 +128,22 @@ export function SystemTestsPage() {
     return state.tasks.filter((task) => task.status === status).length;
   }
 
+  async function runImportPackageTest(action: () => Promise<void>) {
+    try {
+      await action();
+    } catch (error) {
+      setImportTestMessage(getFirestorePermissionMessage(error));
+    }
+  }
+
+  async function getImportTestState() {
+    if (!user) {
+      throw new Error("Sign in before running import package tests.");
+    }
+
+    return firestoreState ?? loadFirestoreProjectState();
+  }
+
   return (
     <div className="page-stack">
       <section className="panel">
@@ -151,7 +180,7 @@ export function SystemTestsPage() {
           <button type="button" onClick={() => runFirebaseTest(async () => {
             setFirebaseResultMessage(
               isFirebaseConfigured
-                ? `Configured. Auth user: ${auth?.currentUser?.email ?? "none"} / Firestore: ${db ? "ready" : "not initialized"}`
+                ? `Configured. Auth UID: ${auth?.currentUser?.uid ?? "none"} / email: ${auth?.currentUser?.email ?? "none"} / Firestore: ${db ? "ready" : "not initialized"}`
                 : "Firebase environment variables are missing."
             );
           })}>
@@ -163,7 +192,9 @@ export function SystemTestsPage() {
             }
 
             await ensureFirestoreUserProfile(user);
-            setFirebaseResultMessage(`User profile ready at organizations/org_accel_projects/users/${user.uid}`);
+            const profile = await loadCurrentUserProfileFromFirestore(user);
+            setFirestoreUserProfile(profile);
+            setFirebaseResultMessage(`User profile ready at organizations/org_accel_projects/users/${user.uid} with role ${profile.role}`);
           })}>
             Bootstrap User Profile
           </button>
@@ -238,6 +269,17 @@ export function SystemTestsPage() {
         <div className="test-readout">
           <strong>Latest Firebase result</strong>
           <span>{firebaseResultMessage || "No Firebase test has run yet."}</span>
+          <span>Firebase UID: {user?.uid ?? "not signed in"}</span>
+          <span>Firebase email: {user?.email ?? "not signed in"}</span>
+          {firestoreUserProfile ? (
+            <span>
+              Firestore profile: {firestoreUserProfile.name} / {firestoreUserProfile.email} / {firestoreUserProfile.role}
+            </span>
+          ) : (
+            <span>Firestore profile: not loaded</span>
+          )}
+          <span>Effective role: {effectiveRole}</span>
+          <span>Admin preview available: {canUseAdminPreview(effectiveRole) ? "yes" : "no"}</span>
           {firestoreState ? (
             <span>
               {firestoreState.projects.length} projects / {firestoreState.tasks.length} tasks /
@@ -247,6 +289,103 @@ export function SystemTestsPage() {
           ) : null}
           {firestoreTestTaskId ? <span>Current Firestore test task: {firestoreTestTaskId}</span> : null}
           {firestoreTestRiskId ? <span>Current Firestore test risk: {firestoreTestRiskId}</span> : null}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Import Package Tests</h2>
+            <p>Manual checks for the AccelProjects Project Package validator, planner, duplicate protection, and optional Firestore import.</p>
+          </div>
+        </div>
+        <div className="button-row">
+          <button type="button" onClick={() => runImportPackageTest(async () => {
+            setImportTestMessage(JSON.stringify(sampleProjectImport, null, 2));
+          })}>
+            Load Sample Fixture
+          </button>
+          <button type="button" onClick={() => runImportPackageTest(async () => {
+            const validation = validateProjectImportPackage(sampleProjectImport);
+            const errors = validation.issues.filter((issue) => issue.severity === "error").length;
+            const warnings = validation.issues.filter((issue) => issue.severity === "warning").length;
+            setImportTestMessage(`Sample validation: ${validation.package ? "valid" : "invalid"} / ${errors} errors / ${warnings} warnings`);
+          })}>
+            Validate Sample Fixture
+          </button>
+          <button type="button" onClick={() => runImportPackageTest(async () => {
+            const state = await getImportTestState();
+            const validation = validateProjectImportPackage(sampleProjectImport);
+
+            if (!validation.package) {
+              throw new Error("Sample fixture did not validate.");
+            }
+
+            const plan = createProjectImportPlan(validation.package, state);
+            setImportTestMessage(`Proposed counts: ${JSON.stringify(plan.proposedCounts)}`);
+          })}>
+            Display Proposed Counts
+          </button>
+          <button type="button" onClick={() => runImportPackageTest(async () => {
+            const invalidPackage = {
+              ...sampleProjectImport,
+              tasks: sampleProjectImport.tasks.map((task, index) => (
+                index === 0 ? { ...task, phaseKey: "missing-phase" } : task
+              ))
+            };
+            const validation = validateProjectImportPackage(invalidPackage);
+            const rejected = validation.issues.some((issue) => issue.code === "missing_phase_reference");
+            setImportTestMessage(rejected ? "Invalid fixture rejected for missing phase reference." : "Invalid fixture was not rejected.");
+          })}>
+            Confirm Invalid Rejection
+          </button>
+          <button className="danger-button" type="button" onClick={() => runImportPackageTest(async () => {
+            if (!user) {
+              throw new Error("Sign in before importing the sample fixture.");
+            }
+
+            const state = await getImportTestState();
+            const validation = validateProjectImportPackage(sampleProjectImport);
+
+            if (!validation.package) {
+              throw new Error("Sample fixture did not validate.");
+            }
+
+            const plan = createProjectImportPlan(validation.package, state);
+            const result = await importProjectPackageToFirestore({
+              projectPackage: validation.package,
+              projectState: state,
+              overrides: {
+                createClient: plan.clientResolution.action === "create",
+                clientId: plan.clientResolution.selectedClientId,
+                personUserIds: Object.fromEntries(plan.personResolutions.map((person) => [person.alias, person.selectedUserId])),
+                projectOwnerUserId: plan.projectOwnerUserId
+              }
+            });
+            const reloadedState = await loadFirestoreProjectState();
+            const importedProject = reloadedState.projects.find((project) => project.id === result.projectId);
+            setImportTestMessage(`WROTE TEST DATA. Imported ${result.projectName}. Reload check: ${importedProject ? "found" : "missing"}.`);
+          })}>
+            Write Sample Import to Firestore
+          </button>
+          <button type="button" onClick={() => runImportPackageTest(async () => {
+            const state = await getImportTestState();
+            const validation = validateProjectImportPackage(sampleProjectImport);
+
+            if (!validation.package) {
+              throw new Error("Sample fixture did not validate.");
+            }
+
+            const hash = await createProjectImportSourceHash(validation.package);
+            const duplicate = await checkProjectImportDuplicate(validation.package, hash, state);
+            setImportTestMessage(duplicate.duplicate ? `Duplicate import blocked for ${duplicate.existingManifest?.projectName}.` : "No duplicate manifest found for the sample fixture.");
+          })}>
+            Confirm Duplicate Block
+          </button>
+        </div>
+        <div className="test-readout">
+          <strong>Latest import package result</strong>
+          <span>{importTestMessage || "No import package test has run yet."}</span>
         </div>
       </section>
     </div>
