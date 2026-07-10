@@ -7,13 +7,17 @@ import {
   FileText,
   FlaskConical,
   Gauge,
+  LogOut,
   MessageSquare,
   Plus,
   Search,
   Settings,
   Users
 } from "lucide-react";
+import type { User as FirebaseUser } from "firebase/auth";
 import { useEffect, useMemo, useState } from "react";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import { LoginPage } from "./auth/LoginPage";
 import { AdminPage } from "./pages/AdminPage";
 import { CustomerOrderPage } from "./pages/CustomerOrderPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -39,8 +43,25 @@ import {
   ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
-import { demoRoles } from "./data/projectMockData";
-import { loadProjectState, saveProjectState } from "./data/projectStore";
+import { demoRoles, initialProjectState } from "./data/projectMockData";
+import {
+  addTaskCommentInFirestore,
+  createRiskInFirestore,
+  createTaskInFirestore,
+  loadProjectStateFromFirestore,
+  resetFirestoreProjectState,
+  seedProjectStateToFirestore,
+  updateRiskInFirestore,
+  updateTaskInFirestore
+} from "./data/firestoreProjectStore";
+import {
+  loadClientPreview,
+  loadSelectedProjectId,
+  loadSelectedRole,
+  saveClientPreview,
+  saveSelectedProjectId,
+  saveSelectedRole
+} from "./data/projectStore";
 import type { ProjectRisk, ProjectState, Task, UserRole } from "./types";
 import accelLogo from "../Accel_GOH_Logo.png";
 
@@ -70,6 +91,24 @@ export type ProjectPageProps = {
   onCreateTask: (task: Omit<Task, "id" | "completedAt">) => void;
   onAddRisk: (risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) => void;
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
+  onResetProjectState: () => void;
+  onSeedProjectState: () => void;
+};
+
+const emptyProjectState: ProjectState = {
+  users: [],
+  clients: [],
+  projects: [],
+  projectMembers: [],
+  phases: [],
+  milestones: [],
+  tasks: [],
+  taskDependencies: [],
+  taskComments: [],
+  risks: [],
+  documents: [],
+  metrics: [],
+  activityEvents: []
 };
 
 function getRoute(props: ProjectPageProps) {
@@ -174,31 +213,40 @@ function Sidebar() {
         })}
       </nav>
       <div className="sidebar-footer">
-        <span>Prototype Mode</span>
-        <strong>Local task, risk, role, and client-preview changes persist in this browser.</strong>
+        <span>Firebase Mode</span>
+        <strong>Project edits persist through Firestore. Preview role and client-safe preferences stay in this browser.</strong>
       </div>
     </aside>
   );
 }
 
 function TopHeader({
+  user,
   role,
   onRoleChange,
   searchQuery,
   onSearchChange,
   clientPreview,
-  onClientPreviewChange
+  onClientPreviewChange,
+  onLogout
 }: {
+  user: FirebaseUser;
   role: UserRole;
   onRoleChange: (role: UserRole) => void;
   searchQuery: string;
   onSearchChange: (value: string) => void;
   clientPreview: boolean;
   onClientPreviewChange: (value: boolean) => void;
+  onLogout: () => void;
 }) {
   const selectedRole = demoRoles.find((item) => item.role === role);
-  const initials = role === "client" ? "DW" : role === "admin" ? "ER" : role === "contributor" ? "MT" : role === "viewer" ? "VL" : "SJ";
-  const displayName = role === "client" ? "Dana Whitfield" : role === "admin" ? "Elena Rivera" : role === "contributor" ? "Marcus Turner" : role === "viewer" ? "Victor Lee" : "Sarah Jenkins";
+  const displayName = user.displayName || user.email || "Signed-in user";
+  const initials = displayName
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "AP";
 
   return (
     <header className="top-header">
@@ -212,7 +260,7 @@ function TopHeader({
       </label>
       <div className="top-header-actions">
         <label className="compact-field role-field">
-          Role
+          Preview Role
           <select value={role} onChange={(event) => onRoleChange(event.target.value as UserRole)}>
             {demoRoles.map((item) => (
               <option key={item.role} value={item.role}>{item.label}</option>
@@ -231,9 +279,12 @@ function TopHeader({
           <span className="user-avatar">{initials}</span>
           <span>
             <strong>{displayName}</strong>
-            <small>{selectedRole?.label ?? "Project Manager"}</small>
+            <small>{selectedRole?.label ?? "Project Manager"} preview</small>
           </span>
         </div>
+        <button className="icon-button" type="button" aria-label="Sign out" onClick={onLogout}>
+          <LogOut size={18} aria-hidden="true" />
+        </button>
       </div>
     </header>
   );
@@ -292,16 +343,63 @@ function ProjectHeader({
   );
 }
 
-export function App() {
-  const [projectState, setProjectState] = useState(loadProjectState);
-  const [selectedProjectId, setSelectedProjectId] = useState(() => (
-    window.localStorage.getItem("accelprojects.selectedProjectId") ?? projectState.projects[0]?.id ?? ""
-  ));
-  const [role, setRole] = useState<UserRole>(() => (window.localStorage.getItem("accelprojects.role") as UserRole) ?? "project_manager");
-  const [clientPreview, setClientPreview] = useState(() => window.localStorage.getItem("accelprojects.clientPreview") === "true");
+function AppShell() {
+  const { loading: authLoading, logout, user } = useAuth();
+  const [projectState, setProjectState] = useState<ProjectState>(emptyProjectState);
+  const [projectLoading, setProjectLoading] = useState(true);
+  const [projectError, setProjectError] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState(loadSelectedProjectId);
+  const [role, setRole] = useState<UserRole>(loadSelectedRole);
+  const [clientPreview, setClientPreview] = useState(loadClientPreview);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      return undefined;
+    }
+
+    let active = true;
+
+    async function loadState() {
+      try {
+        const state = await loadProjectStateFromFirestore(user);
+
+        if (!active) {
+          return;
+        }
+
+        setProjectState(state);
+        setSelectedProjectId((current) => (
+          current && state.projects.some((project) => project.id === current) ? current : state.projects[0]?.id ?? ""
+        ));
+        setProjectError("");
+      } catch (error) {
+        if (active) {
+          setProjectError(error instanceof Error ? error.message : "Unable to load project data from Firestore");
+        }
+      } finally {
+        if (active) {
+          setProjectLoading(false);
+        }
+      }
+    }
+
+    loadState();
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
+  function syncProjectState(state: ProjectState) {
+    setProjectState(state);
+    setSelectedProjectId((current) => (
+      current && state.projects.some((project) => project.id === current) ? current : state.projects[0]?.id ?? ""
+    ));
+    setProjectError("");
+  }
 
   const selectedProject = projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
   const projectPhases = useMemo(
@@ -315,129 +413,125 @@ export function App() {
   const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId) : undefined;
   const editable = canEditProjects(role) && !clientPreview;
   const manageable = canManageProjects(role) && !clientPreview;
-
-  useEffect(() => {
-    saveProjectState(projectState);
-  }, [projectState]);
+  const currentPath = window.location.pathname;
+  const routeNeedsProjectData = !["/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
 
   useEffect(() => {
     if (selectedProjectId) {
-      window.localStorage.setItem("accelprojects.selectedProjectId", selectedProjectId);
+      saveSelectedProjectId(selectedProjectId);
     }
   }, [selectedProjectId]);
 
   useEffect(() => {
-    window.localStorage.setItem("accelprojects.role", role);
+    saveSelectedRole(role);
   }, [role]);
 
   useEffect(() => {
-    window.localStorage.setItem("accelprojects.clientPreview", String(clientPreview));
+    saveClientPreview(clientPreview);
   }, [clientPreview]);
 
-  function updateTask(taskId: string, updates: Partial<Task>) {
-    setProjectState((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => {
-        if (task.id !== taskId) {
-          return task;
-        }
-
-        const nextStatus = updates.status ?? task.status;
-
-        return {
-          ...task,
-          ...updates,
-          completedAt: nextStatus === "done" ? task.completedAt ?? new Date().toISOString() : null
-        };
-      })
-    }));
+  async function updateTask(taskId: string, updates: Partial<Task>) {
+    try {
+      await updateTaskInFirestore(taskId, updates);
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to update task");
+    }
   }
 
-  function createTask(task: Omit<Task, "id" | "completedAt">) {
-    const newTask: Task = {
-      ...task,
-      id: `task_${Date.now()}`,
-      completedAt: task.status === "done" ? new Date().toISOString() : null
-    };
-
-    setProjectState((current) => ({
-      ...current,
-      tasks: [newTask, ...current.tasks],
-      activityEvents: [
-        {
-          id: `event_${Date.now()}`,
-          projectId: task.projectId,
-          actorId: "user_sarah",
-          type: "task_created",
-          message: `Task created: ${task.title}`,
-          metadata: { taskId: newTask.id },
-          createdAt: new Date().toISOString()
-        },
-        ...current.activityEvents
-      ]
-    }));
-    setSelectedTaskId(newTask.id);
-    setShowNewTaskForm(false);
+  async function createTask(task: Omit<Task, "id" | "completedAt">) {
+    try {
+      const newTask = await createTaskInFirestore(task);
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+      setSelectedTaskId(newTask.id);
+      setShowNewTaskForm(false);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to create task");
+    }
   }
 
-  function addTaskComment(taskId: string, body: string) {
+  async function addTaskComment(taskId: string, body: string) {
     const task = projectState.tasks.find((item) => item.id === taskId);
 
     if (!task) {
       return;
     }
 
-    setProjectState((current) => ({
-      ...current,
-      taskComments: [
-        {
-          id: `comment_${Date.now()}`,
-          taskId,
-          authorId: role === "client" ? "user_dana" : "user_sarah",
-          body,
-          visibility: role === "client" ? "client" : "internal",
-          createdAt: new Date().toISOString()
-        },
-        ...current.taskComments
-      ],
-      activityEvents: [
-        {
-          id: `event_${Date.now()}`,
-          projectId: task.projectId,
-          actorId: role === "client" ? "user_dana" : "user_sarah",
-          type: "task_note_added",
-          message: `Note added to ${task.title}`,
-          metadata: { taskId },
-          createdAt: new Date().toISOString()
-        },
-        ...current.activityEvents
-      ]
-    }));
+    try {
+      await addTaskCommentInFirestore(taskId, {
+        authorId: role === "client" ? "user_dana" : "user_sarah",
+        body,
+        visibility: role === "client" ? "client" : "internal"
+      });
+
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to add task comment");
+    }
   }
 
-  function addRisk(risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) {
+  async function addRisk(risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) {
     if (!selectedProject) {
       return;
     }
 
-    setProjectState((current) => ({
-      ...current,
-      risks: [
-        {
-          id: `risk_${Date.now()}`,
-          projectId: selectedProject.id,
-          ...risk
-        },
-        ...current.risks
-      ]
-    }));
+    try {
+      await createRiskInFirestore({
+        projectId: selectedProject.id,
+        ...risk
+      });
+
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to create risk");
+    }
   }
 
-  function updateRisk(riskId: string, updates: Partial<ProjectRisk>) {
-    setProjectState((current) => ({
-      ...current,
-      risks: current.risks.map((risk) => risk.id === riskId ? { ...risk, ...updates } : risk)
-    }));
+  async function updateRisk(riskId: string, updates: Partial<ProjectRisk>) {
+    try {
+      await updateRiskInFirestore(riskId, updates);
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to update risk");
+    }
+  }
+
+  async function resetProjectState() {
+    try {
+      await resetFirestoreProjectState();
+      await seedProjectStateToFirestore(initialProjectState);
+
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+
+      setSelectedTaskId(undefined);
+      setShowNewTaskForm(false);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to reset project state");
+    }
+  }
+
+  async function seedProjectState() {
+    try {
+      await seedProjectStateToFirestore(initialProjectState);
+
+      if (user) {
+        syncProjectState(await loadProjectStateFromFirestore(user));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to seed Firestore project data");
+    }
   }
 
   const pageProps: ProjectPageProps = {
@@ -451,46 +545,123 @@ export function App() {
     onUpdateTask: updateTask,
     onCreateTask: createTask,
     onAddRisk: addRisk,
-    onUpdateRisk: updateRisk
+    onUpdateRisk: updateRisk,
+    onResetProjectState: resetProjectState,
+    onSeedProjectState: seedProjectState
   };
+
+  if (authLoading) {
+    return (
+      <main className="login-shell">
+        <section className="login-panel">
+          <h1>Loading AccelProjects</h1>
+          <p>Checking Firebase authentication status.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  if (projectLoading) {
+    return (
+      <div className="app-shell">
+        <Sidebar />
+        <div className="main-shell">
+          <TopHeader
+            user={user}
+            role={role}
+            onRoleChange={setRole}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            clientPreview={clientPreview}
+            onClientPreviewChange={setClientPreview}
+            onLogout={() => void logout()}
+          />
+          <main className="content-area">
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h1>Loading project data</h1>
+                  <p>Loading AccelProjects data from Firestore.</p>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
       <Sidebar />
       <div className="main-shell">
         <TopHeader
+          user={user}
           role={role}
           onRoleChange={setRole}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           clientPreview={clientPreview}
           onClientPreviewChange={setClientPreview}
+          onLogout={() => void logout()}
         />
         <main className="content-area">
-          <ProjectHeader
-            projectState={projectState}
-            selectedProjectId={selectedProject?.id ?? selectedProjectId}
-            onProjectChange={setSelectedProjectId}
-            canEdit={editable}
-            onNewTask={() => setShowNewTaskForm(true)}
-          />
-          <GlobalSearchResults
-            query={searchQuery}
-            tasks={projectTasks}
-            documents={projectState.documents.filter((document) => document.projectId === selectedProject?.id)}
-            users={projectState.users}
-            onOpenTask={setSelectedTaskId}
-          />
-          {showNewTaskForm && selectedProject ? (
-            <NewTaskForm
-              projectId={selectedProject.id}
-              phases={projectPhases}
-              users={projectState.users}
-              onCreateTask={createTask}
-              onCancel={() => setShowNewTaskForm(false)}
-            />
+          {projectError ? (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Firestore Project Data Error</h2>
+                  <p>{projectError}</p>
+                </div>
+              </div>
+            </section>
           ) : null}
-          {getRoute(pageProps)}
+          {projectState.projects.length === 0 && routeNeedsProjectData ? (
+            <section className="panel empty-state">
+              <div className="panel-header">
+                <div>
+                  <h1>No Firestore project data yet</h1>
+                  <p>Seed the AccelProjects demo dataset to create the organization, clients, projects, tasks, comments, risks, documents, metrics, and activity records.</p>
+                </div>
+              </div>
+              <button className="action-button" type="button" onClick={() => void seedProjectState()}>
+                Seed Firestore Demo Data
+              </button>
+            </section>
+          ) : projectState.projects.length === 0 ? (
+            getRoute(pageProps)
+          ) : (
+            <>
+              <ProjectHeader
+                projectState={projectState}
+                selectedProjectId={selectedProject?.id ?? selectedProjectId}
+                onProjectChange={setSelectedProjectId}
+                canEdit={editable}
+                onNewTask={() => setShowNewTaskForm(true)}
+              />
+              <GlobalSearchResults
+                query={searchQuery}
+                tasks={projectTasks}
+                documents={projectState.documents.filter((document) => document.projectId === selectedProject?.id)}
+                users={projectState.users}
+                onOpenTask={setSelectedTaskId}
+              />
+              {showNewTaskForm && selectedProject ? (
+                <NewTaskForm
+                  projectId={selectedProject.id}
+                  phases={projectPhases}
+                  users={projectState.users}
+                  onCreateTask={createTask}
+                  onCancel={() => setShowNewTaskForm(false)}
+                />
+              ) : null}
+              {getRoute(pageProps)}
+            </>
+          )}
         </main>
       </div>
       {selectedTask ? (
@@ -508,3 +679,14 @@ export function App() {
     </div>
   );
 }
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}
+
+export { App };
+export default App;

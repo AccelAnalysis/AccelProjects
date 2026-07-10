@@ -410,7 +410,7 @@ export function NewTaskForm({
       <div className="panel-header">
         <div>
           <h2>Create New Task</h2>
-          <p>Add a task to the selected project. Stored locally for this prototype.</p>
+          <p>Add a task to the selected project. Saved through Firestore.</p>
         </div>
       </div>
       <form
