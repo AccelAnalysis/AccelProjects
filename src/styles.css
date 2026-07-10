@@ -833,6 +833,15 @@ button:disabled {
   margin-top: 14px;
 }
 
+.notice-panel {
+  border-color: #bbf7d0;
+}
+
+.notice-panel p {
+  color: #166534;
+  font-weight: 800;
+}
+
 .form-grid,
 .test-form {
   display: grid;

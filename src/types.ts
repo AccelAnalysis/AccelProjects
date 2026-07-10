@@ -116,6 +116,8 @@ export type User = {
   email: string;
   role: UserRole;
   avatarInitials: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Organization = {
