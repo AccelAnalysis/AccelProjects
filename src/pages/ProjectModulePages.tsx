@@ -259,7 +259,7 @@ export function MetricsPage({ projectState, selectedProjectId }: ProjectPageProp
   );
 }
 
-export function SettingsPage({ role }: ProjectPageProps) {
+export function SettingsPage({ role, onResetProjectState, onSeedProjectState }: ProjectPageProps) {
   return (
     <div className="page-stack">
       <section className="panel">
@@ -282,19 +282,25 @@ export function SettingsPage({ role }: ProjectPageProps) {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h2>Prototype Data</h2>
-            <p>Clear local project-management edits and reload the original mock dataset.</p>
+            <h2>Firestore Demo Data</h2>
+            <p>Seed or reset the Firestore project-management demo dataset. Preview role and client-safe mode remain browser-only prototype controls.</p>
           </div>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              window.localStorage.removeItem("accelprojects.projectState.v1");
-              window.location.reload();
-            }}
-          >
-            Reset Prototype Data
-          </button>
+          <div className="button-row">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onSeedProjectState}
+            >
+              Seed Firestore Demo Data
+            </button>
+            <button
+              className="secondary-button danger-button"
+              type="button"
+              onClick={onResetProjectState}
+            >
+              Reset Firestore Demo Data
+            </button>
+          </div>
         </div>
       </section>
     </div>
