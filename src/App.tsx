@@ -66,14 +66,22 @@ import {
 import { demoRoles, initialProjectState } from "./data/projectMockData";
 import {
   addTaskCommentInFirestore,
+  batchUpdateTaskSchedulesInFirestore,
+  createMilestoneInFirestore,
   createRiskInFirestore,
+  createScheduleActivityEventInFirestore,
   createTaskInFirestore,
+  createTaskDependencyInFirestore,
+  deleteMilestoneInFirestore,
+  deleteTaskDependencyInFirestore,
   getFirestorePermissionMessage,
   loadCurrentUserProfileFromFirestore,
   loadProjectStateFromFirestore,
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
+  updateMilestoneInFirestore,
   updateRiskInFirestore,
+  updateTaskDependencyInFirestore,
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
 import {
@@ -82,7 +90,7 @@ import {
   saveAdminPreviewRole,
   saveSelectedProjectId
 } from "./data/projectStore";
-import type { ProjectRisk, ProjectState, Task, User, UserRole } from "./types";
+import type { Milestone, ProjectActivityEvent, ProjectRisk, ProjectState, Task, TaskDependency, User, UserRole } from "./types";
 import { formatDateOnly } from "./utils/dateOnly";
 import accelLogo from "../Accel_GOH_Logo.png";
 
@@ -114,6 +122,7 @@ export type ProjectPageProps = {
   canEditDocuments: boolean;
   canEditMetrics: boolean;
   canManageRisks: boolean;
+  canManageSchedule: boolean;
   canViewInternal: boolean;
   clientPreview: boolean;
   canEditTask: (task: Task) => boolean;
@@ -121,6 +130,14 @@ export type ProjectPageProps = {
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onCreateTask: (task: Omit<Task, "id" | "completedAt">) => void;
+  onUpdateTaskSchedule: (taskId: string, updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId">) => Promise<void>;
+  onBatchUpdateTaskSchedules: (updates: Array<{ taskId: string; updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId" | "assigneeId" | "status" | "priority"> }>, activityMessage: string) => Promise<void>;
+  onCreateMilestone: (milestone: Omit<Milestone, "id">) => Promise<Milestone | null>;
+  onUpdateMilestone: (milestoneId: string, updates: Partial<Milestone>) => Promise<void>;
+  onDeleteMilestone: (milestoneId: string) => Promise<void>;
+  onCreateDependency: (dependency: Omit<TaskDependency, "id">) => Promise<TaskDependency | null>;
+  onUpdateDependency: (dependencyId: string, updates: Partial<TaskDependency>) => Promise<void>;
+  onDeleteDependency: (dependencyId: string) => Promise<void>;
   onAddRisk: (risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) => void;
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
   onResetProjectState: () => void;
@@ -357,6 +374,7 @@ function TopHeader({
   onAdminPreviewRoleChange,
   searchQuery,
   onSearchChange,
+  onNavigate,
   onLogout
 }: {
   user: FirebaseUser;
@@ -368,6 +386,7 @@ function TopHeader({
   onAdminPreviewRoleChange: (role: UserRole | "off") => void;
   searchQuery: string;
   onSearchChange: (value: string) => void;
+  onNavigate: (path: string) => void;
   onLogout: () => void;
 }) {
   const selectedRole = demoRoles.find((item) => item.role === role);
@@ -402,7 +421,7 @@ function TopHeader({
             </select>
           </label>
         ) : null}
-        <button className="icon-button" type="button" aria-label="Notifications">
+        <button className="icon-button" type="button" aria-label="Notifications" onClick={() => onNavigate("/notifications")}>
           <Bell size={18} aria-hidden="true" />
           <span className="notification-dot" />
         </button>
@@ -449,6 +468,8 @@ function ProjectContextBar({
   const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
   const completeTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0;
+  const healthTone = project.health === "blocked" ? "danger" : project.health === "at_risk" ? "warning" : "success";
+  const healthLabel = project.health === "blocked" ? "Blocked" : project.health === "at_risk" ? "At risk" : "On track";
 
   return (
     <section className="project-context-bar">
@@ -456,8 +477,8 @@ function ProjectContextBar({
         <p className="eyebrow">{client?.name ?? "Client"}</p>
         <div className="project-title-row">
           <h1>{project.name}</h1>
-          <span className={`status-badge ${project.health === "at_risk" ? "warning" : "success"}`}>
-            {project.health.replace("_", " ")}
+          <span className={`status-badge ${healthTone}`}>
+            Health: {healthLabel}
           </span>
         </div>
         <p>{owner?.name ?? "Project owner"} owns delivery. {completeTasks}/{tasks.length} tasks complete.</p>
@@ -494,7 +515,7 @@ function ProjectContextBar({
           <div className="project-actions-popover">
             <button type="button" onClick={() => onNavigate(buildProjectPath(project.id, "settings"))}>Project Settings</button>
             <button type="button" onClick={() => onNavigate("/projects")}>Return to Projects</button>
-            <button type="button" disabled>Export Project</button>
+            <button type="button" disabled title="Export is planned for a later phase.">Export Project (later)</button>
           </div>
         </details>
       </div>
@@ -717,6 +738,213 @@ function AppShell() {
     }
   }
 
+  async function logScheduleActivity(projectId: string, message: string, metadata: Record<string, unknown> = {}) {
+    if (!user) {
+      return null;
+    }
+
+    return createScheduleActivityEventInFirestore({
+      projectId,
+      actorId: userProfile?.id ?? user.uid,
+      type: "schedule_updated",
+      message,
+      metadata
+    });
+  }
+
+  async function updateTaskSchedule(taskId: string, updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId">) {
+    const task = projectState.tasks.find((item) => item.id === taskId);
+
+    if (!task || !canEditCurrentTask(task)) {
+      setProjectError("Your Firestore profile role does not allow scheduling this task.");
+      throw new Error("Task schedule permission denied.");
+    }
+
+    try {
+      await updateTaskInFirestore(taskId, updates);
+      const event = await logScheduleActivity(task.projectId, `Updated schedule for ${task.title}.`, { taskId, updates });
+      setProjectState((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) => item.id === taskId ? { ...item, ...updates } : item),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Schedule updated.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function batchUpdateTaskSchedules(
+    updates: Array<{ taskId: string; updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId" | "assigneeId" | "status" | "priority"> }>,
+    activityMessage: string
+  ) {
+    const tasks = updates.map((item) => projectState.tasks.find((task) => task.id === item.taskId));
+
+    if (tasks.some((task) => !task || !canEditCurrentTask(task))) {
+      setProjectError("Your Firestore profile role does not allow one or more selected task updates.");
+      throw new Error("Bulk schedule permission denied.");
+    }
+
+    const projectId = tasks.find(Boolean)?.projectId;
+
+    try {
+      await batchUpdateTaskSchedulesInFirestore(updates);
+      const event = projectId ? await logScheduleActivity(projectId, activityMessage, { taskCount: updates.length }) : null;
+      setProjectState((current) => ({
+        ...current,
+        tasks: current.tasks.map((task) => {
+          const update = updates.find((item) => item.taskId === task.id);
+          return update ? { ...task, ...update.updates } : task;
+        }),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice(activityMessage);
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function createMilestone(milestone: Omit<Milestone, "id">) {
+    if (!permissions.canManageSchedule) {
+      setProjectError("Your Firestore profile role does not allow managing milestones.");
+      return null;
+    }
+
+    try {
+      const created = await createMilestoneInFirestore(milestone);
+      const event = await logScheduleActivity(milestone.projectId, `Created milestone ${milestone.name}.`, { milestoneId: created.id });
+      setProjectState((current) => ({
+        ...current,
+        milestones: [...current.milestones, created],
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Milestone created.");
+      return created;
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      return null;
+    }
+  }
+
+  async function updateMilestone(milestoneId: string, updates: Partial<Milestone>) {
+    const milestone = projectState.milestones.find((item) => item.id === milestoneId);
+
+    if (!permissions.canManageSchedule || !milestone) {
+      setProjectError("Your Firestore profile role does not allow managing milestones.");
+      throw new Error("Milestone permission denied.");
+    }
+
+    try {
+      await updateMilestoneInFirestore(milestoneId, updates);
+      const event = await logScheduleActivity(milestone.projectId, `Updated milestone ${milestone.name}.`, { milestoneId, updates });
+      setProjectState((current) => ({
+        ...current,
+        milestones: current.milestones.map((item) => item.id === milestoneId ? { ...item, ...updates } : item),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Milestone updated.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function deleteMilestone(milestoneId: string) {
+    const milestone = projectState.milestones.find((item) => item.id === milestoneId);
+
+    if (!permissions.canManageSchedule || !milestone) {
+      setProjectError("Your Firestore profile role does not allow managing milestones.");
+      throw new Error("Milestone permission denied.");
+    }
+
+    try {
+      await deleteMilestoneInFirestore(milestoneId);
+      const event = await logScheduleActivity(milestone.projectId, `Deleted milestone ${milestone.name}.`, { milestoneId });
+      setProjectState((current) => ({
+        ...current,
+        milestones: current.milestones.filter((item) => item.id !== milestoneId),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Milestone deleted.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function createDependency(dependency: Omit<TaskDependency, "id">) {
+    if (!permissions.canManageSchedule) {
+      setProjectError("Your Firestore profile role does not allow managing dependencies.");
+      return null;
+    }
+
+    try {
+      const created = await createTaskDependencyInFirestore(dependency);
+      const task = projectState.tasks.find((item) => item.id === dependency.taskId);
+      const event = task ? await logScheduleActivity(task.projectId, "Created task dependency.", { dependencyId: created.id }) : null;
+      setProjectState((current) => ({
+        ...current,
+        taskDependencies: [...current.taskDependencies, created],
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Dependency created.");
+      return created;
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      return null;
+    }
+  }
+
+  async function updateDependency(dependencyId: string, updates: Partial<TaskDependency>) {
+    if (!permissions.canManageSchedule) {
+      setProjectError("Your Firestore profile role does not allow managing dependencies.");
+      throw new Error("Dependency permission denied.");
+    }
+
+    const dependency = projectState.taskDependencies.find((item) => item.id === dependencyId);
+    const task = dependency ? projectState.tasks.find((item) => item.id === dependency.taskId) : undefined;
+
+    try {
+      await updateTaskDependencyInFirestore(dependencyId, updates);
+      const event = task ? await logScheduleActivity(task.projectId, "Updated task dependency.", { dependencyId, updates }) : null;
+      setProjectState((current) => ({
+        ...current,
+        taskDependencies: current.taskDependencies.map((item) => item.id === dependencyId ? { ...item, ...updates } : item),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Dependency updated.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function deleteDependency(dependencyId: string) {
+    if (!permissions.canManageSchedule) {
+      setProjectError("Your Firestore profile role does not allow managing dependencies.");
+      throw new Error("Dependency permission denied.");
+    }
+
+    const dependency = projectState.taskDependencies.find((item) => item.id === dependencyId);
+    const task = dependency ? projectState.tasks.find((item) => item.id === dependency.taskId) : undefined;
+
+    try {
+      await deleteTaskDependencyInFirestore(dependencyId);
+      const event = task ? await logScheduleActivity(task.projectId, "Deleted task dependency.", { dependencyId }) : null;
+      setProjectState((current) => ({
+        ...current,
+        taskDependencies: current.taskDependencies.filter((item) => item.id !== dependencyId),
+        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
+      }));
+      setProjectNotice("Dependency deleted.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
   async function addTaskComment(taskId: string, body: string) {
     const task = projectState.tasks.find((item) => item.id === taskId);
 
@@ -848,6 +1076,7 @@ function AppShell() {
     canEditDocuments: permissions.canEditDocuments,
     canEditMetrics: permissions.canEditMetrics,
     canManageRisks: permissions.canManageRisks,
+    canManageSchedule: permissions.canManageSchedule,
     canViewInternal: permissions.canViewInternal,
     clientPreview,
     canEditTask: canEditCurrentTask,
@@ -855,6 +1084,14 @@ function AppShell() {
     onOpenTask: setSelectedTaskId,
     onUpdateTask: updateTask,
     onCreateTask: createTask,
+    onUpdateTaskSchedule: updateTaskSchedule,
+    onBatchUpdateTaskSchedules: batchUpdateTaskSchedules,
+    onCreateMilestone: createMilestone,
+    onUpdateMilestone: updateMilestone,
+    onDeleteMilestone: deleteMilestone,
+    onCreateDependency: createDependency,
+    onUpdateDependency: updateDependency,
+    onDeleteDependency: deleteDependency,
     onAddRisk: addRisk,
     onUpdateRisk: updateRisk,
     onResetProjectState: resetProjectState,
@@ -901,6 +1138,7 @@ function AppShell() {
             onAdminPreviewRoleChange={setAdminPreviewRole}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
+            onNavigate={navigate}
             onLogout={() => void logout()}
           />
           <main className="content-area">
@@ -932,6 +1170,7 @@ function AppShell() {
           onAdminPreviewRoleChange={setAdminPreviewRole}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          onNavigate={navigate}
           onLogout={() => void logout()}
         />
         <main className="content-area">

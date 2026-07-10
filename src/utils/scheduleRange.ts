@@ -1,4 +1,4 @@
-import type { Phase, Project, Task } from "../types";
+import type { Milestone, Phase, Project, Task } from "../types";
 import { addDays, daysBetween, isDateOnly, todayDateOnly } from "./dateOnly";
 
 export type ScheduleRange = {
@@ -8,16 +8,18 @@ export type ScheduleRange = {
   available: boolean;
 };
 
-export function calculateScheduleRange(project: Project, phases: Phase[], tasks: Task[], now = new Date()): ScheduleRange {
+export function calculateScheduleRange(project: Project, phases: Phase[], tasks: Task[], milestones: Milestone[] = [], now = new Date()): ScheduleRange {
   const starts = [
     project.startDate,
     ...phases.map((phase) => phase.startDate),
-    ...tasks.map((task) => task.startDate)
+    ...tasks.map((task) => task.startDate),
+    ...milestones.map((milestone) => milestone.date)
   ].filter(isDateOnly);
   const ends = [
     project.targetDate,
     ...phases.map((phase) => phase.endDate),
-    ...tasks.map((task) => task.dueDate)
+    ...tasks.map((task) => task.dueDate),
+    ...milestones.map((milestone) => milestone.date)
   ].filter(isDateOnly);
 
   if (starts.length === 0 && ends.length === 0) {

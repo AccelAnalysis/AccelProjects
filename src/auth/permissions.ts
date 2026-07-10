@@ -8,6 +8,7 @@ export type ProjectPermissions = {
   canEditTasks: boolean;
   canManageProjects: boolean;
   canManageRisks: boolean;
+  canManageSchedule: boolean;
   canUseAdminPreview: boolean;
   canViewInternal: boolean;
   isReadOnly: boolean;
@@ -101,6 +102,7 @@ export function getProjectPermissions(role: UserRole, userProfile: User | null |
     canEditTasks: role === "admin" || role === "project_manager" || role === "contributor",
     canManageProjects: canEditProjectWork,
     canManageRisks: canEditProjectWork,
+    canManageSchedule: canEditProjectWork,
     canUseAdminPreview: canUseAdminPreview(getUserRole(userProfile)),
     canViewInternal,
     isReadOnly: role === "viewer" || role === "client"
