@@ -23,8 +23,7 @@ import type {
   Task,
   TaskComment,
   TaskDependency,
-  User,
-  UserRole
+  User
 } from "../../types";
 import { mockTeamCapacity } from "../../data/projectMockData";
 
@@ -36,14 +35,6 @@ export const taskStatusLabels: Record<Task["status"], string> = {
   not_started: "Not Started",
   todo: "Not Started"
 };
-
-export function canEditProjects(role: UserRole) {
-  return role === "admin" || role === "project_manager" || role === "contributor";
-}
-
-export function canManageProjects(role: UserRole) {
-  return role === "admin" || role === "project_manager";
-}
 
 export function formatDate(date: string) {
   return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -182,6 +173,7 @@ export function TaskTable({
   phases,
   users,
   canEdit,
+  canEditTask,
   onOpenTask,
   onUpdateTask
 }: {
@@ -189,6 +181,7 @@ export function TaskTable({
   phases: Phase[];
   users: User[];
   canEdit: boolean;
+  canEditTask?: (task: Task) => boolean;
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
 }) {
@@ -207,58 +200,62 @@ export function TaskTable({
           </tr>
         </thead>
         <tbody>
-          {tasks.map((task) => (
-            <tr key={task.id}>
-              <td>
-                <strong>{task.title}</strong>
-                <span>{task.description}</span>
-              </td>
-              <td>{getPhaseName(phases, task.phaseId)}</td>
-              <td>{getUserName(users, task.assigneeId)}</td>
-              <td>
-                {canEdit ? (
-                  <input
-                    type="date"
-                    value={task.dueDate}
-                    onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value })}
-                  />
-                ) : (
-                  formatDate(task.dueDate)
-                )}
-              </td>
-              <td>
-                {canEdit ? (
-                  <select
-                    value={task.status}
-                    onChange={(event) => onUpdateTask(task.id, { status: event.target.value as Task["status"] })}
-                  >
-                    {Object.entries(taskStatusLabels).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className={`status-badge ${statusTone(task.status)}`}>{taskStatusLabels[task.status]}</span>
-                )}
-              </td>
-              <td>
-                {canEdit ? (
-                  <select
-                    value={task.priority}
-                    onChange={(event) => onUpdateTask(task.id, { priority: event.target.value as Task["priority"] })}
-                  >
-                    {["low", "medium", "high", "urgent"].map((priority) => (
-                      <option key={priority} value={priority}>{priority}</option>
-                    ))}
-                  </select>
-                ) : (
-                  task.priority
-                )}
-              </td>
-              <td>
-                <button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>
-              </td>
-            </tr>
-          ))}
+          {tasks.map((task) => {
+            const taskCanEdit = canEditTask ? canEditTask(task) : canEdit;
+
+            return (
+              <tr key={task.id}>
+                <td>
+                  <strong>{task.title}</strong>
+                  <span>{task.description}</span>
+                </td>
+                <td>{getPhaseName(phases, task.phaseId)}</td>
+                <td>{getUserName(users, task.assigneeId)}</td>
+                <td>
+                  {taskCanEdit ? (
+                    <input
+                      type="date"
+                      value={task.dueDate}
+                      onChange={(event) => onUpdateTask(task.id, { dueDate: event.target.value })}
+                    />
+                  ) : (
+                    formatDate(task.dueDate)
+                  )}
+                </td>
+                <td>
+                  {taskCanEdit ? (
+                    <select
+                      value={task.status}
+                      onChange={(event) => onUpdateTask(task.id, { status: event.target.value as Task["status"] })}
+                    >
+                      {Object.entries(taskStatusLabels).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={`status-badge ${statusTone(task.status)}`}>{taskStatusLabels[task.status]}</span>
+                  )}
+                </td>
+                <td>
+                  {taskCanEdit ? (
+                    <select
+                      value={task.priority}
+                      onChange={(event) => onUpdateTask(task.id, { priority: event.target.value as Task["priority"] })}
+                    >
+                      {["low", "medium", "high", "urgent"].map((priority) => (
+                        <option key={priority} value={priority}>{priority}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    task.priority
+                  )}
+                </td>
+                <td>
+                  <button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -271,6 +268,7 @@ export function TaskDetailPanel({
   users,
   comments,
   canEdit,
+  canAddComment,
   onClose,
   onUpdateTask,
   onAddComment
@@ -280,6 +278,7 @@ export function TaskDetailPanel({
   users: User[];
   comments: TaskComment[];
   canEdit: boolean;
+  canAddComment: boolean;
   onClose: () => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onAddComment: (taskId: string, body: string) => void;
@@ -357,7 +356,7 @@ export function TaskDetailPanel({
           </article>
         ))}
       </div>
-      {canEdit ? (
+      {canAddComment ? (
         <form
           className="comment-form"
           onSubmit={(event) => {

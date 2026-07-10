@@ -16,6 +16,19 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/users/$(request.auth.uid));
     }
 
+    function signedInUserRole(organizationId) {
+      return get(/databases/$(database)/documents/organizations/$(organizationId)/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin(organizationId) {
+      return isOrgMember(organizationId) && signedInUserRole(organizationId) == "admin";
+    }
+
+    function canWriteProjectData(organizationId) {
+      return isOrgMember(organizationId)
+        && signedInUserRole(organizationId) in ["admin", "project_manager"];
+    }
+
     function isOwnBootstrapProfile(organizationId, userId) {
       return isSignedIn()
         && isAccelOrg(organizationId)
@@ -42,10 +55,20 @@ service cloud.firestore {
       }
 
       match /clients/{clientId} {
+        // TODO: replace broad org-member writes with role-aware server checks.
         allow read, write: if isOrgMember(organizationId);
       }
 
+      match /imports/{importId} {
+        // MVP import manifests are written by the signed-in client after role checks in the app.
+        // Firestore still limits manifest writes to admin and project_manager org members.
+        allow read: if isOrgMember(organizationId);
+        allow create, update: if canWriteProjectData(organizationId);
+        allow delete: if false;
+      }
+
       match /projects/{projectId} {
+        // TODO: use canWriteProjectData plus assigned-project membership checks for writes.
         allow read, write: if isOrgMember(organizationId);
 
         match /members/{memberId} {

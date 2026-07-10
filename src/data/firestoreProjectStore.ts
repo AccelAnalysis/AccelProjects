@@ -152,6 +152,20 @@ export async function ensureFirestoreUserProfile(user: FirebaseUser) {
   } satisfies User, { merge: true });
 }
 
+export async function loadCurrentUserProfileFromFirestore(user: FirebaseUser) {
+  await ensureFirestoreUserProfile(user);
+
+  const userId = requirePathSegment(user.uid, "auth.uid");
+  const userRef = doc(requireDb(), ...organizationPath(), rootCollectionMap.users, userId);
+  const snapshot = await getDoc(userRef);
+
+  if (!snapshot.exists()) {
+    throw new Error(`User profile was not found at organizations/${FIRESTORE_ORGANIZATION_ID}/users/${userId}.`);
+  }
+
+  return snapshot.data() as User;
+}
+
 async function readCollection<T extends { id: string }>(pathSegments: string[]) {
   const snapshot = await getDocs(query(collection(requireDb(), ...validatePathSegments(pathSegments))));
   return snapshot.docs.map((item) => item.data() as T);
@@ -237,12 +251,18 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
   await ensureFirestoreUserProfile(currentUser);
 
   const database = requireDb();
+  const currentUserId = requirePathSegment(currentUser.uid, "auth.uid");
+  const currentUserRef = doc(database, ...organizationPath(), rootCollectionMap.users, currentUserId);
+  const currentUserProfile = (await getDoc(currentUserRef)).data() as User | undefined;
   const batch = writeBatch(database);
 
   batch.set(doc(database, ...organizationPath()), mockOrganization);
 
   initialState.users.forEach((user) => {
-    batch.set(doc(database, ...organizationPath(), rootCollectionMap.users, requireRecordId(user, "user")), user);
+    batch.set(
+      doc(database, ...organizationPath(), rootCollectionMap.users, requireRecordId(user, "user")),
+      user.id === currentUserId && currentUserProfile ? currentUserProfile : user
+    );
   });
   initialState.clients.forEach((client) => {
     batch.set(doc(database, ...organizationPath(), rootCollectionMap.clients, requireRecordId(client, "client")), client);

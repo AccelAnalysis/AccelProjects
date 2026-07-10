@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Settings,
+  Upload,
   Users
 } from "lucide-react";
 import type { User as FirebaseUser } from "firebase/auth";
@@ -33,22 +34,29 @@ import {
 } from "./pages/ProjectModulePages";
 import { PaymentCancelPage } from "./pages/PaymentCancelPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
+import { ProjectImportPage } from "./pages/ProjectImportPage";
 import { SystemTestsPage } from "./pages/SystemTestsPage";
 import { TestPage } from "./pages/TestPage";
 import {
-  canEditProjects,
-  canManageProjects,
   GlobalSearchResults,
   NewTaskForm,
   ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
+import {
+  canAddTaskComment,
+  canEditTask,
+  canUseAdminPreview,
+  getProjectPermissions,
+  getUserRole
+} from "./auth/permissions";
 import { demoRoles, initialProjectState } from "./data/projectMockData";
 import {
   addTaskCommentInFirestore,
   createRiskInFirestore,
   createTaskInFirestore,
   getFirestorePermissionMessage,
+  loadCurrentUserProfileFromFirestore,
   loadProjectStateFromFirestore,
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
@@ -56,19 +64,18 @@ import {
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
 import {
-  loadClientPreview,
+  loadAdminPreviewRole,
   loadSelectedProjectId,
-  loadSelectedRole,
-  saveClientPreview,
-  saveSelectedProjectId,
-  saveSelectedRole
+  saveAdminPreviewRole,
+  saveSelectedProjectId
 } from "./data/projectStore";
-import type { ProjectRisk, ProjectState, Task, UserRole } from "./types";
+import type { ProjectRisk, ProjectState, Task, User, UserRole } from "./types";
 import accelLogo from "../Accel_GOH_Logo.png";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Gauge },
   { href: "/projects", label: "Projects", icon: BriefcaseBusiness },
+  { href: "/projects/import", label: "Import Project", icon: Upload },
   { href: "/tasks", label: "Tasks & Phases", icon: ClipboardList },
   { href: "/timeline", label: "Gantt & Timeline", icon: CalendarDays },
   { href: "/messages", label: "Messages", icon: MessageSquare },
@@ -84,9 +91,18 @@ export type ProjectPageProps = {
   projectState: ProjectState;
   selectedProjectId: string;
   role: UserRole;
+  userProfile: User | null;
   canEdit: boolean;
   canManage: boolean;
+  canAddTaskComments: boolean;
+  canCreateTasks: boolean;
+  canEditDocuments: boolean;
+  canEditMetrics: boolean;
+  canManageRisks: boolean;
+  canViewInternal: boolean;
   clientPreview: boolean;
+  canEditTask: (task: Task) => boolean;
+  canAddTaskComment: (task: Task) => boolean;
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onCreateTask: (task: Omit<Task, "id" | "completedAt">) => void;
@@ -94,6 +110,7 @@ export type ProjectPageProps = {
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
   onResetProjectState: () => void;
   onSeedProjectState: () => void;
+  onProjectImported: (projectId: string) => Promise<void>;
 };
 
 const emptyProjectState: ProjectState = {
@@ -121,6 +138,10 @@ function getRoute(props: ProjectPageProps) {
 
   if (path === "/projects") {
     return <ProjectsPage {...props} />;
+  }
+
+  if (path === "/projects/import") {
+    return <ProjectImportPage {...props} />;
   }
 
   if (path === "/tasks") {
@@ -220,23 +241,28 @@ function Sidebar() {
 function TopHeader({
   user,
   role,
-  onRoleChange,
+  profileRole,
+  userProfile,
+  adminPreviewRole,
+  adminPreviewAvailable,
+  onAdminPreviewRoleChange,
   searchQuery,
   onSearchChange,
-  clientPreview,
-  onClientPreviewChange,
   onLogout
 }: {
   user: FirebaseUser;
   role: UserRole;
-  onRoleChange: (role: UserRole) => void;
+  profileRole: UserRole;
+  userProfile: User | null;
+  adminPreviewRole: UserRole | "off";
+  adminPreviewAvailable: boolean;
+  onAdminPreviewRoleChange: (role: UserRole | "off") => void;
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  clientPreview: boolean;
-  onClientPreviewChange: (value: boolean) => void;
   onLogout: () => void;
 }) {
   const selectedRole = demoRoles.find((item) => item.role === role);
+  const profileRoleLabel = demoRoles.find((item) => item.role === profileRole)?.label ?? profileRole;
   const displayName = user.displayName || user.email || "Signed-in user";
   const initials = displayName
     .split(/[\s@.]+/)
@@ -256,18 +282,17 @@ function TopHeader({
         />
       </label>
       <div className="top-header-actions">
-        <label className="compact-field role-field">
-          Preview Role
-          <select value={role} onChange={(event) => onRoleChange(event.target.value as UserRole)}>
-            {demoRoles.map((item) => (
-              <option key={item.role} value={item.role}>{item.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="toggle-field">
-          <input type="checkbox" checked={clientPreview} onChange={(event) => onClientPreviewChange(event.target.checked)} />
-          Client-safe preview
-        </label>
+        {adminPreviewAvailable ? (
+          <label className="compact-field role-field">
+            Admin Preview
+            <select value={adminPreviewRole} onChange={(event) => onAdminPreviewRoleChange(event.target.value as UserRole | "off")}>
+              <option value="off">Use my role</option>
+              {demoRoles.map((item) => (
+                <option key={item.role} value={item.role}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <button className="icon-button" type="button" aria-label="Notifications">
           <Bell size={18} aria-hidden="true" />
           <span className="notification-dot" />
@@ -275,8 +300,11 @@ function TopHeader({
         <div className="user-chip">
           <span className="user-avatar">{initials}</span>
           <span>
-            <strong>{displayName}</strong>
-            <small>{selectedRole?.label ?? "Project Manager"} preview</small>
+            <strong>{userProfile?.name ?? displayName}</strong>
+            <small>
+              {selectedRole?.label ?? profileRoleLabel}
+              {adminPreviewAvailable && adminPreviewRole !== "off" ? ` admin preview / ${profileRoleLabel}` : ""}
+            </small>
           </span>
         </div>
         <button className="icon-button" type="button" aria-label="Sign out" onClick={onLogout}>
@@ -347,8 +375,8 @@ function AppShell() {
   const [projectError, setProjectError] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState(loadSelectedProjectId);
-  const [role, setRole] = useState<UserRole>(loadSelectedRole);
-  const [clientPreview, setClientPreview] = useState(loadClientPreview);
+  const [userProfile, setUserProfile] = useState<User | null>(null);
+  const [adminPreviewRole, setAdminPreviewRole] = useState<UserRole | "off">(loadAdminPreviewRole);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
@@ -362,12 +390,16 @@ function AppShell() {
 
     async function loadState() {
       try {
-        const state = await loadProjectStateFromFirestore(user);
+        const [profile, state] = await Promise.all([
+          loadCurrentUserProfileFromFirestore(user),
+          loadProjectStateFromFirestore(user)
+        ]);
 
         if (!active) {
           return;
         }
 
+        setUserProfile(profile);
         setProjectState(state);
         setSelectedProjectId((current) => (
           current && state.projects.some((project) => project.id === current) ? current : state.projects[0]?.id ?? ""
@@ -409,10 +441,18 @@ function AppShell() {
     [projectState.tasks, selectedProject?.id]
   );
   const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId) : undefined;
-  const editable = canEditProjects(role) && !clientPreview;
-  const manageable = canManageProjects(role) && !clientPreview;
+  const profileRole = getUserRole(userProfile);
+  const adminPreviewAvailable = canUseAdminPreview(profileRole);
+  const role = adminPreviewAvailable && adminPreviewRole !== "off" ? adminPreviewRole : profileRole;
+  const permissions = getProjectPermissions(role, userProfile, selectedProject, projectState);
+  const clientPreview = role === "client";
+  const editable = permissions.canEditTasks && !clientPreview;
+  const manageable = permissions.canManageProjects && !clientPreview;
   const currentPath = window.location.pathname;
-  const routeNeedsProjectData = !["/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
+  const routeNeedsProjectData = !["/projects/import", "/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
+  const routeUsesProjectHeader = !["/projects/import", "/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
+  const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
+  const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -421,14 +461,22 @@ function AppShell() {
   }, [selectedProjectId]);
 
   useEffect(() => {
-    saveSelectedRole(role);
-  }, [role]);
+    if (!adminPreviewAvailable && adminPreviewRole !== "off") {
+      setAdminPreviewRole("off");
+      return;
+    }
 
-  useEffect(() => {
-    saveClientPreview(clientPreview);
-  }, [clientPreview]);
+    saveAdminPreviewRole(adminPreviewRole);
+  }, [adminPreviewAvailable, adminPreviewRole]);
 
   async function updateTask(taskId: string, updates: Partial<Task>) {
+    const task = projectState.tasks.find((item) => item.id === taskId);
+
+    if (!task || !canEditCurrentTask(task)) {
+      setProjectError("Your Firestore profile role does not allow editing this task.");
+      return;
+    }
+
     try {
       await updateTaskInFirestore(taskId, updates);
       if (user) {
@@ -441,6 +489,11 @@ function AppShell() {
   }
 
   async function createTask(task: Omit<Task, "id" | "completedAt">) {
+    if (!permissions.canCreateTasks) {
+      setProjectError("Your Firestore profile role does not allow creating tasks for this project.");
+      return;
+    }
+
     try {
       const newTask = await createTaskInFirestore(task);
       if (user) {
@@ -461,11 +514,21 @@ function AppShell() {
       return;
     }
 
+    if (!canAddCommentToCurrentTask(task)) {
+      setProjectError("Your Firestore profile role does not allow adding comments to this task.");
+      return;
+    }
+
+    if (!user) {
+      setProjectError("Sign in before adding task comments.");
+      return;
+    }
+
     try {
       await addTaskCommentInFirestore(taskId, {
-        authorId: role === "client" ? "user_dana" : "user_sarah",
+        authorId: userProfile?.id ?? user.uid,
         body,
-        visibility: role === "client" ? "client" : "internal"
+        visibility: "internal"
       });
 
       if (user) {
@@ -479,6 +542,11 @@ function AppShell() {
 
   async function addRisk(risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) {
     if (!selectedProject) {
+      return;
+    }
+
+    if (!permissions.canManageRisks) {
+      setProjectError("Your Firestore profile role does not allow creating project risks.");
       return;
     }
 
@@ -498,6 +566,11 @@ function AppShell() {
   }
 
   async function updateRisk(riskId: string, updates: Partial<ProjectRisk>) {
+    if (!permissions.canManageRisks) {
+      setProjectError("Your Firestore profile role does not allow editing project risks.");
+      return;
+    }
+
     try {
       await updateRiskInFirestore(riskId, updates);
       if (user) {
@@ -539,20 +612,42 @@ function AppShell() {
     }
   }
 
+  async function reloadAfterProjectImport(projectId: string) {
+    if (!user) {
+      return;
+    }
+
+    const state = await loadProjectStateFromFirestore(user);
+    syncProjectState(state);
+    setSelectedProjectId(projectId);
+    saveSelectedProjectId(projectId);
+    setProjectNotice("Project import completed.");
+  }
+
   const pageProps: ProjectPageProps = {
     projectState,
     selectedProjectId: selectedProject?.id ?? selectedProjectId,
     role,
+    userProfile,
     canEdit: editable,
     canManage: manageable,
+    canAddTaskComments: permissions.canAddTaskComments,
+    canCreateTasks: permissions.canCreateTasks,
+    canEditDocuments: permissions.canEditDocuments,
+    canEditMetrics: permissions.canEditMetrics,
+    canManageRisks: permissions.canManageRisks,
+    canViewInternal: permissions.canViewInternal,
     clientPreview,
+    canEditTask: canEditCurrentTask,
+    canAddTaskComment: canAddCommentToCurrentTask,
     onOpenTask: setSelectedTaskId,
     onUpdateTask: updateTask,
     onCreateTask: createTask,
     onAddRisk: addRisk,
     onUpdateRisk: updateRisk,
     onResetProjectState: resetProjectState,
-    onSeedProjectState: seedProjectState
+    onSeedProjectState: seedProjectState,
+    onProjectImported: reloadAfterProjectImport
   };
 
   if (authLoading) {
@@ -578,11 +673,13 @@ function AppShell() {
           <TopHeader
             user={user}
             role={role}
-            onRoleChange={setRole}
+            profileRole={profileRole}
+            userProfile={userProfile}
+            adminPreviewRole={adminPreviewRole}
+            adminPreviewAvailable={adminPreviewAvailable}
+            onAdminPreviewRoleChange={setAdminPreviewRole}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            clientPreview={clientPreview}
-            onClientPreviewChange={setClientPreview}
             onLogout={() => void logout()}
           />
           <main className="content-area">
@@ -607,11 +704,13 @@ function AppShell() {
         <TopHeader
           user={user}
           role={role}
-          onRoleChange={setRole}
+          profileRole={profileRole}
+          userProfile={userProfile}
+          adminPreviewRole={adminPreviewRole}
+          adminPreviewAvailable={adminPreviewAvailable}
+          onAdminPreviewRoleChange={setAdminPreviewRole}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          clientPreview={clientPreview}
-          onClientPreviewChange={setClientPreview}
           onLogout={() => void logout()}
         />
         <main className="content-area">
@@ -642,7 +741,7 @@ function AppShell() {
                 Seed Demo Data
               </button>
             </section>
-          ) : projectState.projects.length === 0 ? (
+          ) : projectState.projects.length === 0 || !routeUsesProjectHeader ? (
             getRoute(pageProps)
           ) : (
             <>
@@ -650,7 +749,7 @@ function AppShell() {
                 projectState={projectState}
                 selectedProjectId={selectedProject?.id ?? selectedProjectId}
                 onProjectChange={setSelectedProjectId}
-                canEdit={editable}
+                canEdit={permissions.canCreateTasks}
                 onNewTask={() => setShowNewTaskForm(true)}
               />
               <GlobalSearchResults
@@ -660,7 +759,7 @@ function AppShell() {
                 users={projectState.users}
                 onOpenTask={setSelectedTaskId}
               />
-              {showNewTaskForm && selectedProject ? (
+              {showNewTaskForm && selectedProject && permissions.canCreateTasks ? (
                 <NewTaskForm
                   projectId={selectedProject.id}
                   phases={projectPhases}
@@ -679,8 +778,11 @@ function AppShell() {
           task={selectedTask}
           phases={projectState.phases}
           users={projectState.users}
-          comments={projectState.taskComments.filter((comment) => comment.taskId === selectedTask.id)}
-          canEdit={editable}
+          comments={projectState.taskComments.filter((comment) => (
+            comment.taskId === selectedTask.id && (!clientPreview || comment.visibility === "client")
+          ))}
+          canEdit={canEditCurrentTask(selectedTask)}
+          canAddComment={canAddCommentToCurrentTask(selectedTask)}
           onClose={() => setSelectedTaskId(undefined)}
           onUpdateTask={updateTask}
           onAddComment={addTaskComment}
