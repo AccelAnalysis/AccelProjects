@@ -159,13 +159,6 @@ export function PlanPage(props: ProjectPageProps) {
 
   return (
     <section className="panel plan-panel">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">Project schedule</p>
-          <h1>Plan</h1>
-          <p>Phase sequence, task timing, and delivery context for the selected project.</p>
-        </div>
-      </div>
       <PlanWorkspace
         project={project}
         phases={phases}

@@ -1,10 +1,10 @@
 export const projectTabs = [
-  { id: "plan", label: "Plan" },
   { id: "overview", label: "Overview" },
+  { id: "plan", label: "Plan" },
   { id: "tasks", label: "Tasks" },
   { id: "risks", label: "Risks" },
-  { id: "messages", label: "Messages" },
   { id: "files", label: "Files" },
+  { id: "messages", label: "Messages" },
   { id: "metrics", label: "Metrics" },
   { id: "team", label: "Team" },
   { id: "settings", label: "Settings" }
