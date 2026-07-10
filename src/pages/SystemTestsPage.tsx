@@ -1,12 +1,4 @@
 import { useState } from "react";
-import {
-  addTaskComment,
-  createRisk,
-  createTask,
-  getProjectState,
-  resetProjectStateOnServer,
-  updateTask
-} from "../data/projectApi";
 import { useAuth } from "../auth/AuthProvider";
 import { auth, db, isFirebaseConfigured } from "../firebase";
 import {
@@ -26,21 +18,10 @@ import type { ProjectRisk, ProjectState, Task } from "../types";
 
 export function SystemTestsPage() {
   const { user } = useAuth();
-  const [projectState, setProjectState] = useState<ProjectState | undefined>();
   const [firestoreState, setFirestoreState] = useState<ProjectState | undefined>();
-  const [testTaskId, setTestTaskId] = useState("");
   const [firestoreTestTaskId, setFirestoreTestTaskId] = useState("");
   const [firestoreTestRiskId, setFirestoreTestRiskId] = useState("");
-  const [resultMessage, setResultMessage] = useState("");
   const [firebaseResultMessage, setFirebaseResultMessage] = useState("");
-
-  async function runProjectTest(action: () => Promise<void>) {
-    try {
-      await action();
-    } catch (error) {
-      setResultMessage(error instanceof Error ? error.message : "Project API test failed");
-    }
-  }
 
   async function runFirebaseTest(action: () => Promise<void>) {
     try {
@@ -48,45 +29,6 @@ export function SystemTestsPage() {
     } catch (error) {
       setFirebaseResultMessage(getFirestorePermissionMessage(error));
     }
-  }
-
-  async function loadProjectState() {
-    const state = await getProjectState();
-    setProjectState(state);
-    setResultMessage(`Loaded ${state.projects.length} projects and ${state.tasks.length} tasks from /api/project-state`);
-    return state;
-  }
-
-  async function getCurrentProjectState() {
-    return projectState ?? loadProjectState();
-  }
-
-  async function getOrCreateTestTask() {
-    const state = await getCurrentProjectState();
-    const existingTask = testTaskId ? state.tasks.find((task) => task.id === testTaskId) : undefined;
-
-    if (existingTask) {
-      return existingTask;
-    }
-
-    const project = state.projects[0];
-    const phase = state.phases.find((item) => item.projectId === project.id) ?? state.phases[0];
-    const result = await createTask({
-      projectId: project.id,
-      phaseId: phase.id,
-      title: "System test task",
-      description: "Created from the System Tests project API panel.",
-      status: "not_started",
-      priority: "medium",
-      assigneeId: "user_sarah",
-      startDate: "2026-07-09",
-      dueDate: "2026-07-16",
-      estimateHours: 2
-    });
-
-    setProjectState(result.state);
-    setTestTaskId(result.task.id);
-    return result.task;
   }
 
   async function loadFirestoreProjectState() {
@@ -305,103 +247,6 @@ export function SystemTestsPage() {
           ) : null}
           {firestoreTestTaskId ? <span>Current Firestore test task: {firestoreTestTaskId}</span> : null}
           {firestoreTestRiskId ? <span>Current Firestore test risk: {firestoreTestRiskId}</span> : null}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h2>Project API Tests</h2>
-            <p>Manual checks for server-backed project state, task, comment, risk, and reset routes.</p>
-          </div>
-        </div>
-        <div className="button-row">
-          <button type="button" onClick={() => runProjectTest(async () => {
-            await loadProjectState();
-          })}>
-            Check Project API Data Load
-          </button>
-          <button
-            type="button"
-            onClick={() => runProjectTest(async () => {
-              const task = await getOrCreateTestTask();
-              setResultMessage(`Created test task ${task.id}`);
-            })}
-          >
-            Create Test Task
-          </button>
-          <button
-            type="button"
-            onClick={() => runProjectTest(async () => {
-              const task = await getOrCreateTestTask();
-              const result = await updateTask(task.id, { status: "in_progress" });
-
-              setProjectState(result.state);
-              setTestTaskId(result.task.id);
-              setResultMessage(`Updated ${result.task.id} to ${result.task.status}`);
-            })}
-          >
-            Update Test Task Status
-          </button>
-          <button
-            type="button"
-            onClick={() => runProjectTest(async () => {
-              const task = await getOrCreateTestTask();
-              const result = await addTaskComment(task.id, {
-                authorId: "user_sarah",
-                body: "System test comment added through the project API.",
-                visibility: "internal"
-              });
-
-              setProjectState(result.state);
-              setResultMessage(`Added comment ${result.comment.id} to ${task.id}`);
-            })}
-          >
-            Add Test Comment
-          </button>
-          <button
-            type="button"
-            onClick={() => runProjectTest(async () => {
-              const state = await getCurrentProjectState();
-              const result = await createRisk({
-                projectId: state.projects[0].id,
-                title: "System test risk",
-                severity: "medium",
-                probability: "medium",
-                status: "monitoring",
-                mitigationPlan: "Validate through manual System Tests before next phase."
-              });
-
-              setProjectState(result.state);
-              setResultMessage(`Created risk ${result.risk.id}`);
-            })}
-          >
-            Create Test Risk
-          </button>
-          <button
-            type="button"
-            onClick={() => runProjectTest(async () => {
-              const result = await resetProjectStateOnServer();
-
-              setProjectState(result.state);
-              setTestTaskId("");
-              setResultMessage("Server project state reset to seed data");
-            })}
-          >
-            Reset Server Project State
-          </button>
-        </div>
-        <div className="test-readout">
-          <strong>Latest project API result</strong>
-          <span>{resultMessage || "No project API test has run yet."}</span>
-          {projectState ? (
-            <span>
-              {projectState.projects.length} projects / {projectState.tasks.length} tasks /
-              {" "}{countTasksByStatus(projectState, "in_progress")} in progress /
-              {" "}{projectState.risks.length} risks
-            </span>
-          ) : null}
-          {testTaskId ? <span>Current test task: {testTaskId}</span> : null}
         </div>
       </section>
     </div>
