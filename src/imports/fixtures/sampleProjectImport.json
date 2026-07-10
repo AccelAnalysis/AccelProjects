@@ -110,10 +110,10 @@
       ]
     },
     {
-      "key": "prototype-dashboard",
+      "key": "prototype-reporting-views",
       "phaseKey": "build",
-      "title": "Prototype dashboard views",
-      "description": "Create a first-pass dashboard structure with sample metrics and review notes.",
+      "title": "Prototype reporting views",
+      "description": "Create a first-pass reporting structure with sample metrics and review notes.",
       "status": "not_started",
       "priority": "medium",
       "assigneeAlias": null,
@@ -140,7 +140,7 @@
       "estimateHours": 5,
       "dependencies": [
         {
-          "dependsOnTaskKey": "prototype-dashboard",
+          "dependsOnTaskKey": "prototype-reporting-views",
           "type": "finish_to_start"
         }
       ]

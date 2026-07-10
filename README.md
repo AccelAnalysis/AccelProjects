@@ -34,7 +34,7 @@ Copy `.env.example` to `.env`, fill in the `VITE_FIREBASE_*` values for the `acc
 
 ## Project Imports
 
-AccelProjects supports a preview-first project import workflow for AI-generated JSON packages. Import files must be strict JSON using package type `accelprojects.project` and schema version `1.0`; accepted file extensions are `.json` and `.accelproject.json`.
+AccelProjects supports a preview-first project import workflow for structured project packages from any source, including AI-generated project plans, manually prepared JSON packages, converted project documentation, planning conversations, requirements documents, repository analysis, and future supported conversion tools. Import files must be strict JSON using package type `accelprojects.project` and schema version `1.0`; accepted file extensions are `.json` and `.accelproject.json`.
 
 Workflow:
 
@@ -52,7 +52,7 @@ Client matching supports `match_or_create` only. Existing clients are matched by
 
 Every import creates an audit manifest at `organizations/org_accel_projects/imports/{importId}`. The manifest records package ID, source hash, project/client IDs, generated entity mappings, counts, user, timestamps, status, warnings, and error details. Completed or processing manifests with the same package ID or source hash block duplicate imports by default.
 
-The sample fixture is at `src/imports/fixtures/sampleProjectImport.json`. Use the Import Project page or the Import Package Tests section on System Tests to load, validate, preview, optionally write, reload, and duplicate-check the fixture. Do not use the sample fixture as the MLB Dashboard import.
+The sample fixture is at `src/imports/fixtures/sampleProjectImport.json`. Use the Import Project page or the Import Package Tests section on System Tests to load, validate, preview, optionally write, reload, and duplicate-check the sample project package. Before importing the first production project package, validate it through the preview workflow and confirm the target users and clients are correct.
 
 Run import unit tests with:
 
