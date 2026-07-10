@@ -52,6 +52,21 @@ service cloud.firestore {
       return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId);
     }
 
+    function canWriteProjectRevisionFields(organizationId) {
+      return isOrgMember(organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "revision",
+          "updatedAt",
+          "lastStructuralChangeAt"
+        ]);
+    }
+
+    function canCreateProjectVersion(organizationId, projectId) {
+      return isOrgMember(organizationId)
+        && request.resource.data.projectId == projectId
+        && request.resource.data.actorId == request.auth.uid;
+    }
+
     function canContributorUpdateAssignedTask(organizationId) {
       return isContributorRole(organizationId)
         && resource.data.assigneeId == request.auth.uid
@@ -110,7 +125,8 @@ service cloud.firestore {
       match /projects/{projectId} {
         allow read: if isOrgMember(organizationId);
         allow create: if canWriteProjectData(organizationId);
-        allow update: if canManageProjectSchedule(organizationId, projectId);
+        allow update: if canManageProjectSchedule(organizationId, projectId)
+          || canWriteProjectRevisionFields(organizationId);
         allow delete: if isAdmin(organizationId);
 
         match /members/{memberId} {
@@ -170,6 +186,17 @@ service cloud.firestore {
         match /activityEvents/{eventId} {
           allow read: if isOrgMember(organizationId);
           allow create: if canWriteProjectData(organizationId);
+          allow update, delete: if false;
+        }
+
+        match /versions/{versionId} {
+          allow read: if isOrgMember(organizationId);
+          allow create: if canCreateProjectVersion(organizationId, projectId);
+          allow update, delete: if false;
+        }
+
+        match /exportSnapshots/{snapshotId} {
+          allow read, create: if canManageProjectSchedule(organizationId, projectId);
           allow update, delete: if false;
         }
       }

@@ -210,8 +210,8 @@ export function ProjectImportPage({ projectState, role, onProjectImported }: Pro
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h1>Import Project</h1>
-            <p>Your current role cannot manage project imports.</p>
+            <h1>Import New Project</h1>
+            <p>Your current role cannot create project imports.</p>
           </div>
         </div>
       </section>
@@ -223,9 +223,9 @@ export function ProjectImportPage({ projectState, role, onProjectImported }: Pro
       <section className="panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Preview first import</p>
-            <h1>Import Project</h1>
-            <p>Paste or select an AccelProjects Project Package. Nothing writes to Firestore until validation passes and you approve the import.</p>
+            <p className="eyebrow">Create-only import</p>
+            <h1>Import New Project</h1>
+            <p>Paste or select an AccelProjects Project Package to create a new project workspace. This flow does not update an existing project.</p>
           </div>
           <button className="secondary-button" type="button" onClick={resetImport}>
             <RotateCcw size={18} aria-hidden="true" />
@@ -265,7 +265,7 @@ export function ProjectImportPage({ projectState, role, onProjectImported }: Pro
             </button>
           </div>
         </div>
-        <p className="panel-note">Supported schema: accelprojects.project version 1.0. Accepted files: .json and .accelproject.json up to 2 MB.</p>
+        <p className="panel-note">Supported schema: accelprojects.project version 1.0. Accepted files: .json and .accelproject.json up to 2 MB. Update imports are planned for a later safe-import phase.</p>
       </section>
 
       {validation ? (

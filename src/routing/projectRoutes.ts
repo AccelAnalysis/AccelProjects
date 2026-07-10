@@ -34,8 +34,12 @@ export function buildProjectImportPath(projectId?: string) {
   return projectId ? `/projects/${encodeURIComponent(projectId)}/import` : "/projects/import";
 }
 
+export function buildProjectVersionHistoryPath(projectId: string) {
+  return `/projects/${encodeURIComponent(projectId)}/versions`;
+}
+
 export function parseProjectRoute(pathname: string): {
-  type: "portfolio" | "import" | "workspace" | "invalid-tab" | "none";
+  type: "portfolio" | "import" | "workspace" | "version-history" | "invalid-tab" | "none";
   projectId?: string;
   tab?: ProjectTabId;
   attemptedTab?: string;
@@ -60,6 +64,10 @@ export function parseProjectRoute(pathname: string): {
 
   if (tab === "import") {
     return { type: "import", projectId };
+  }
+
+  if (tab === "versions" && segments.length === 3) {
+    return { type: "version-history", projectId };
   }
 
   if (!isProjectTab(tab)) {

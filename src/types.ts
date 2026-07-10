@@ -153,6 +153,8 @@ export type Project = {
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+  revision?: number;
+  lastStructuralChangeAt?: string;
 };
 
 export type ProjectMember = {
@@ -251,6 +253,42 @@ export type ProjectActivityEvent = {
   createdAt: string;
 };
 
+export type ProjectVersion = {
+  id: string;
+  projectId: string;
+  revision: number;
+  previousRevision: number;
+  changeType:
+    | "project_imported"
+    | "task_created"
+    | "task_updated"
+    | "tasks_batch_updated"
+    | "milestone_created"
+    | "milestone_updated"
+    | "milestone_deleted"
+    | "dependency_created"
+    | "dependency_updated"
+    | "dependency_deleted"
+    | "risk_created"
+    | "risk_updated"
+    | "project_exported";
+  summary: string;
+  actorId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ProjectExportSnapshot = {
+  id: string;
+  projectId: string;
+  baseRevision: number;
+  packageId: string;
+  sourceHash: string;
+  createdBy: string;
+  createdAt: string;
+  packageJson: string;
+};
+
 export type ProjectState = {
   users: User[];
   clients: Client[];
@@ -265,4 +303,5 @@ export type ProjectState = {
   documents: ProjectDocument[];
   metrics: ProjectMetric[];
   activityEvents: ProjectActivityEvent[];
+  projectVersions: ProjectVersion[];
 };

@@ -194,6 +194,7 @@ export type ProjectImportManifest = {
   clientId: string;
   mode: ProjectImportMode;
   sourceHash: string;
+  projectRevision: number;
   status: "processing" | "completed" | "failed";
   createdBy: string;
   createdAt: string;
