@@ -1,4 +1,4 @@
-import { FileText, Filter, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
+import { Download, FileText, Filter, History, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   ActivityFeed,
@@ -13,7 +13,7 @@ import {
 } from "../components/project/ProjectWidgets";
 import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
-import { buildProjectImportPath, buildProjectPath } from "../routing/projectRoutes";
+import { buildProjectPath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
 import type { Task } from "../types";
 import { todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
@@ -34,6 +34,7 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     documents: projectState.documents.filter((document) => document.projectId === projectId),
     metrics: projectState.metrics.filter((metric) => metric.projectId === projectId),
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
+    versions: projectState.projectVersions.filter((version) => version.projectId === projectId),
     dependencies: projectState.taskDependencies.filter((dependency) => (
       projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
     ))
@@ -73,7 +74,7 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
             {canManage && canViewInternal ? (
               <button className="action-button" type="button" onClick={() => onNavigate("/projects/import")}>
                 <Upload size={18} aria-hidden="true" />
-                Import Project
+                Import New Project
               </button>
             ) : null}
           </div>
@@ -85,7 +86,7 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
             {canManage && canViewInternal ? (
               <button className="action-button" type="button" onClick={() => onNavigate("/projects/import")}>
                 <Upload size={18} aria-hidden="true" />
-                Import Project
+                Import New Project
               </button>
             ) : null}
           </div>
@@ -525,7 +526,7 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
   );
 }
 
-export function ProjectSettingsPage({ projectState, selectedProjectId, canManage, canViewInternal, onNavigate }: ProjectPageProps) {
+export function ProjectSettingsPage({ projectState, selectedProjectId, canManage, canViewInternal, onExportProject, onNavigate }: ProjectPageProps) {
   const { project, client, owner } = projectSlices(projectState, selectedProjectId);
 
   if (!project) {
@@ -540,10 +541,20 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
           <p>Project metadata and available management actions.</p>
         </div>
         {canManage && canViewInternal ? (
-          <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectImportPath(project.id))}>
-            <Upload size={18} aria-hidden="true" />
-            Import
-          </button>
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={() => void onExportProject(project.id)}>
+              <Download size={18} aria-hidden="true" />
+              Export Project
+            </button>
+            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectVersionHistoryPath(project.id))}>
+              <History size={18} aria-hidden="true" />
+              Version History
+            </button>
+            <button className="secondary-button" type="button" disabled title="Update import is planned for the next safe-import phase.">
+              <Upload size={18} aria-hidden="true" />
+              Update via File - planned next
+            </button>
+          </div>
         ) : null}
       </div>
       <div className="form-grid readonly-grid">
@@ -563,8 +574,77 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
           </label>
         ))}
       </div>
-      <p className="panel-note">Editable project metadata controls will be enabled when a safe project update workflow is available.</p>
+      <p className="panel-note">Update imports are intentionally disabled for selected projects until the safe update workflow is implemented. Portfolio import creates a new project only.</p>
     </section>
+  );
+}
+
+export function VersionHistoryPage({ projectState, selectedProjectId, canViewInternal }: ProjectPageProps) {
+  const { project, versions } = projectSlices(projectState, selectedProjectId);
+
+  if (!project) {
+    return <ProjectUnavailable />;
+  }
+
+  if (!canViewInternal) {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Version History</h1>
+            <p>Version history is limited to internal project users.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const sortedVersions = [...versions].sort((left, right) => right.revision - left.revision || right.createdAt.localeCompare(left.createdAt));
+
+  return (
+    <div className="page-stack">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Version History</h1>
+            <p>{project.name} is currently at revision {project.revision ?? 1}.</p>
+          </div>
+          <StatusBadge label={`Revision ${project.revision ?? 1}`} tone="info" />
+        </div>
+        {sortedVersions.length === 0 ? (
+          <div className="table-empty">No version records have been created for this project yet.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Revision</th>
+                  <th>Change</th>
+                  <th>Summary</th>
+                  <th>Actor</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedVersions.map((version) => {
+                  const actor = projectState.users.find((user) => user.id === version.actorId);
+
+                  return (
+                    <tr key={version.id}>
+                      <td><strong>r{version.revision}</strong><span>from r{version.previousRevision}</span></td>
+                      <td>{version.changeType.replaceAll("_", " ")}</td>
+                      <td>{version.summary}</td>
+                      <td>{actor?.name ?? version.actorId}</td>
+                      <td>{formatDate(version.createdAt)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 

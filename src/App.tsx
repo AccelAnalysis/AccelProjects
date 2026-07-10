@@ -2,8 +2,10 @@ import {
   Bell,
   BriefcaseBusiness,
   ClipboardList,
+  Download,
   FlaskConical,
   Gauge,
+  History,
   Home,
   Inbox,
   LogOut,
@@ -34,7 +36,8 @@ import {
   RisksPage,
   SettingsPage,
   TasksPage,
-  TeamPage
+  TeamPage,
+  VersionHistoryPage
 } from "./pages/ProjectModulePages";
 import { PaymentCancelPage } from "./pages/PaymentCancelPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
@@ -48,8 +51,8 @@ import {
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
 import {
-  buildProjectImportPath,
   buildProjectPath,
+  buildProjectVersionHistoryPath,
   defaultProjectTab,
   legacyProjectRouteMap,
   parseProjectRoute,
@@ -68,6 +71,7 @@ import {
   addTaskCommentInFirestore,
   batchUpdateTaskSchedulesInFirestore,
   createMilestoneInFirestore,
+  createProjectExportSnapshotInFirestore,
   createRiskInFirestore,
   createScheduleActivityEventInFirestore,
   createTaskInFirestore,
@@ -84,6 +88,7 @@ import {
   updateTaskDependencyInFirestore,
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
+import { createCanonicalProjectExport, hashProjectExport, stringifyCanonicalProjectExport } from "./exports/projectExport";
 import {
   loadAdminPreviewRole,
   loadSelectedProjectId,
@@ -144,6 +149,7 @@ export type ProjectPageProps = {
   onResetProjectState: () => void;
   onSeedProjectState: () => void;
   onProjectImported: (projectId: string) => Promise<void>;
+  onExportProject: (projectId: string) => Promise<void>;
   onNavigate: (path: string, options?: { replace?: boolean }) => void;
   onProjectChange: (projectId: string) => void;
   onNewTask: () => void;
@@ -162,7 +168,8 @@ const emptyProjectState: ProjectState = {
   risks: [],
   documents: [],
   metrics: [],
-  activityEvents: []
+  activityEvents: [],
+  projectVersions: []
 };
 
 function getFatalDependencyValidationMessage(tasks: Task[], dependencies: TaskDependency[]) {
@@ -182,6 +189,10 @@ function getRoute(props: ProjectPageProps, pathname: string) {
 
   if (projectRoute.type === "import") {
     return <ProjectImportPage {...props} />;
+  }
+
+  if (projectRoute.type === "version-history") {
+    return <VersionHistoryPage {...props} />;
   }
 
   if (projectRoute.type === "invalid-tab") {
@@ -459,6 +470,7 @@ function ProjectContextBar({
   canCreateTasks,
   canManage,
   onNewTask,
+  onExportProject,
   onNavigate
 }: {
   projectState: ProjectState;
@@ -468,6 +480,7 @@ function ProjectContextBar({
   canCreateTasks: boolean;
   canManage: boolean;
   onNewTask: () => void;
+  onExportProject: (projectId: string) => Promise<void>;
   onNavigate: (path: string) => void;
 }) {
   const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
@@ -507,11 +520,6 @@ function ProjectContextBar({
             New
           </button>
         ) : null}
-        {canManage ? (
-          <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectImportPath(project.id))}>
-            Update via File
-          </button>
-        ) : null}
         <details className="project-actions-menu">
           <summary aria-label="More project actions">
             <MoreHorizontal size={18} aria-hidden="true" />
@@ -519,8 +527,21 @@ function ProjectContextBar({
           <div className="project-actions-popover">
             <button type="button" onClick={() => onNavigate(buildProjectPath(project.id, "settings"))}>Project Settings</button>
             <button type="button" onClick={() => onNavigate("/projects")}>Return to Projects</button>
-            <button type="button" disabled title="Export is planned for Phase 3A.">Export Project</button>
-            <button type="button" disabled title="Version history is planned for Phase 3A.">Version History</button>
+            {canManage ? (
+              <button type="button" onClick={() => void onExportProject(project.id)}>
+                <Download size={16} aria-hidden="true" />
+                Export Project
+              </button>
+            ) : null}
+            <button type="button" onClick={() => onNavigate(buildProjectVersionHistoryPath(project.id))}>
+              <History size={16} aria-hidden="true" />
+              Version History
+            </button>
+            {canManage ? (
+              <button type="button" disabled title="Update import is planned for the next safe-import phase.">
+                Update via File - planned next
+              </button>
+            ) : null}
           </div>
         </details>
       </div>
@@ -534,7 +555,7 @@ function ProjectTabs({
   onNavigate
 }: {
   projectId: string;
-  activeTab: ProjectTabId;
+  activeTab?: ProjectTabId;
   onNavigate: (path: string) => void;
 }) {
   return (
@@ -640,12 +661,29 @@ function AppShell() {
     setProjectError("");
   }
 
+  function withLocalProjectRevision(current: ProjectState, projectId: string): Pick<ProjectState, "projects"> {
+    const now = new Date().toISOString();
+
+    return {
+      projects: current.projects.map((project) => (
+        project.id === projectId
+          ? {
+            ...project,
+            revision: (project.revision ?? 1) + 1,
+            updatedAt: now,
+            lastStructuralChangeAt: now
+          }
+          : project
+      ))
+    };
+  }
+
   const projectRoute = parseProjectRoute(pathname);
-  const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
+  const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
   const routeProject = routeProjectId ? projectState.projects.find((project) => project.id === routeProjectId) : undefined;
   const selectedProject = routeProject ?? projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
   const activeProjectTab = projectRoute.type === "workspace" ? projectRoute.tab ?? defaultProjectTab : defaultProjectTab;
-  const routeIsValidProjectWorkspace = projectRoute.type === "workspace" && Boolean(routeProject);
+  const routeIsValidProjectWorkspace = (projectRoute.type === "workspace" || projectRoute.type === "version-history") && Boolean(routeProject);
   const projectPhases = useMemo(
     () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id),
     [projectState.phases, selectedProject?.id]
@@ -662,7 +700,7 @@ function AppShell() {
   const clientPreview = role === "client";
   const editable = permissions.canEditTasks && !clientPreview;
   const manageable = permissions.canManageProjects && !clientPreview;
-  const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
+  const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
   const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
   const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
 
@@ -714,7 +752,7 @@ function AppShell() {
     }
 
     try {
-      await updateTaskInFirestore(taskId, updates);
+      await updateTaskInFirestore(taskId, updates, task.projectId);
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
@@ -766,10 +804,11 @@ function AppShell() {
     }
 
     try {
-      await updateTaskInFirestore(taskId, updates);
+      await updateTaskInFirestore(taskId, updates, task.projectId);
       const event = await logScheduleActivity(task.projectId, `Updated schedule for ${task.title}.`, { taskId, updates });
       setProjectState((current) => ({
         ...current,
+        ...withLocalProjectRevision(current, task.projectId),
         tasks: current.tasks.map((item) => item.id === taskId ? { ...item, ...updates } : item),
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -794,10 +833,11 @@ function AppShell() {
     const projectId = tasks.find(Boolean)?.projectId;
 
     try {
-      await batchUpdateTaskSchedulesInFirestore(updates);
+      await batchUpdateTaskSchedulesInFirestore(updates, projectId);
       const event = projectId ? await logScheduleActivity(projectId, activityMessage, { taskCount: updates.length }) : null;
       setProjectState((current) => ({
         ...current,
+        ...(projectId ? withLocalProjectRevision(current, projectId) : {}),
         tasks: current.tasks.map((task) => {
           const update = updates.find((item) => item.taskId === task.id);
           return update ? { ...task, ...update.updates } : task;
@@ -822,6 +862,7 @@ function AppShell() {
       const event = await logScheduleActivity(milestone.projectId, `Created milestone ${milestone.name}.`, { milestoneId: created.id });
       setProjectState((current) => ({
         ...current,
+        ...withLocalProjectRevision(current, milestone.projectId),
         milestones: [...current.milestones, created],
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -842,10 +883,11 @@ function AppShell() {
     }
 
     try {
-      await updateMilestoneInFirestore(milestoneId, updates);
+      await updateMilestoneInFirestore(milestoneId, updates, milestone.projectId);
       const event = await logScheduleActivity(milestone.projectId, `Updated milestone ${milestone.name}.`, { milestoneId, updates });
       setProjectState((current) => ({
         ...current,
+        ...withLocalProjectRevision(current, milestone.projectId),
         milestones: current.milestones.map((item) => item.id === milestoneId ? { ...item, ...updates } : item),
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -865,10 +907,11 @@ function AppShell() {
     }
 
     try {
-      await deleteMilestoneInFirestore(milestoneId);
+      await deleteMilestoneInFirestore(milestoneId, milestone.projectId);
       const event = await logScheduleActivity(milestone.projectId, `Deleted milestone ${milestone.name}.`, { milestoneId });
       setProjectState((current) => ({
         ...current,
+        ...withLocalProjectRevision(current, milestone.projectId),
         milestones: current.milestones.filter((item) => item.id !== milestoneId),
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -894,11 +937,12 @@ function AppShell() {
         return null;
       }
 
-      const created = await createTaskDependencyInFirestore(dependency);
       const task = projectState.tasks.find((item) => item.id === dependency.taskId);
+      const created = await createTaskDependencyInFirestore(dependency, task?.projectId);
       const event = task ? await logScheduleActivity(task.projectId, "Created task dependency.", { dependencyId: created.id }) : null;
       setProjectState((current) => ({
         ...current,
+        ...(task ? withLocalProjectRevision(current, task.projectId) : {}),
         taskDependencies: [...current.taskDependencies, created],
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -935,10 +979,11 @@ function AppShell() {
         throw new Error(validationMessage);
       }
 
-      await updateTaskDependencyInFirestore(dependencyId, updates);
+      await updateTaskDependencyInFirestore(dependencyId, updates, task?.projectId);
       const event = task ? await logScheduleActivity(task.projectId, "Updated task dependency.", { dependencyId, updates }) : null;
       setProjectState((current) => ({
         ...current,
+        ...(task ? withLocalProjectRevision(current, task.projectId) : {}),
         taskDependencies: current.taskDependencies.map((item) => item.id === dependencyId ? { ...item, ...updates } : item),
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -959,10 +1004,11 @@ function AppShell() {
     const task = dependency ? projectState.tasks.find((item) => item.id === dependency.taskId) : undefined;
 
     try {
-      await deleteTaskDependencyInFirestore(dependencyId);
+      await deleteTaskDependencyInFirestore(dependencyId, task?.projectId);
       const event = task ? await logScheduleActivity(task.projectId, "Deleted task dependency.", { dependencyId }) : null;
       setProjectState((current) => ({
         ...current,
+        ...(task ? withLocalProjectRevision(current, task.projectId) : {}),
         taskDependencies: current.taskDependencies.filter((item) => item.id !== dependencyId),
         activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
       }));
@@ -1038,7 +1084,8 @@ function AppShell() {
     }
 
     try {
-      await updateRiskInFirestore(riskId, updates);
+      const risk = projectState.risks.find((item) => item.id === riskId);
+      await updateRiskInFirestore(riskId, updates, risk?.projectId);
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
@@ -1091,6 +1138,43 @@ function AppShell() {
     setProjectNotice("Project import completed.");
   }
 
+  async function exportProject(projectId: string) {
+    if (!manageable) {
+      setProjectError("Your Firestore profile role does not allow exporting this project.");
+      return;
+    }
+
+    try {
+      const exportState = user ? await loadProjectStateFromFirestore(user) : projectState;
+      const projectPackage = createCanonicalProjectExport(exportState, projectId);
+      const packageJson = stringifyCanonicalProjectExport(projectPackage);
+      const sourceHash = await hashProjectExport(projectPackage);
+      await createProjectExportSnapshotInFirestore({
+        projectId,
+        packageId: projectPackage.packageId,
+        sourceHash,
+        packageJson
+      });
+
+      syncProjectState(exportState);
+
+      const fileSlug = projectPackage.project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
+      const blob = new Blob([packageJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileSlug}-r${projectPackage.baseRevision}.accelproject-export.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      setProjectNotice(`Exported ${projectPackage.project.name} at revision ${projectPackage.baseRevision}.`);
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+    }
+  }
+
   const pageProps: ProjectPageProps = {
     projectState,
     selectedProjectId: selectedProject?.id ?? selectedProjectId,
@@ -1125,6 +1209,7 @@ function AppShell() {
     onResetProjectState: resetProjectState,
     onSeedProjectState: seedProjectState,
     onProjectImported: reloadAfterProjectImport,
+    onExportProject: exportProject,
     onNavigate: navigate,
     onProjectChange: (projectId: string) => {
       setSelectedProjectId(projectId);
@@ -1250,9 +1335,14 @@ function AppShell() {
                 canCreateTasks={permissions.canCreateTasks}
                 canManage={manageable}
                 onNewTask={() => setShowNewTaskForm(true)}
+                onExportProject={exportProject}
                 onNavigate={navigate}
               />
-              <ProjectTabs projectId={selectedProject.id} activeTab={activeProjectTab} onNavigate={navigate} />
+              <ProjectTabs
+                projectId={selectedProject.id}
+                activeTab={projectRoute.type === "workspace" ? activeProjectTab : undefined}
+                onNavigate={navigate}
+              />
               <GlobalSearchResults
                 query={searchQuery}
                 tasks={projectTasks}

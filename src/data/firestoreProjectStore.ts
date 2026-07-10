@@ -6,12 +6,15 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   setDoc,
-  updateDoc,
-  writeBatch
+  writeBatch,
+  type Firestore,
+  type Transaction
 } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { initialProjectState, mockOrganization } from "./projectMockData";
+import { validateDependencies } from "../scheduling/dependencyGraph";
 import type {
   Client,
   Milestone,
@@ -19,10 +22,12 @@ import type {
   Project,
   ProjectActivityEvent,
   ProjectDocument,
+  ProjectExportSnapshot,
   ProjectMember,
   ProjectMetric,
   ProjectRisk,
   ProjectState,
+  ProjectVersion,
   Task,
   TaskComment,
   TaskDependency,
@@ -32,7 +37,7 @@ import type {
 export const FIRESTORE_ORGANIZATION_ID = "org_accel_projects";
 
 type CollectionKey = keyof ProjectState;
-type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents";
+type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectVersions" | "projectExportSnapshots";
 
 const rootCollectionMap = {
   users: "users",
@@ -49,7 +54,9 @@ const projectCollectionMap = {
   risks: "risks",
   documents: "documents",
   metrics: "metrics",
-  activityEvents: "activityEvents"
+  activityEvents: "activityEvents",
+  projectVersions: "versions",
+  projectExportSnapshots: "exportSnapshots"
 } satisfies Record<ProjectScopedCollectionKey, string>;
 
 function requireDb() {
@@ -95,12 +102,75 @@ function createId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
+type ProjectMutationChange = Pick<ProjectVersion, "changeType" | "summary" | "metadata">;
+
+function withProjectRevisionDefaults(project: Project): Project {
+  return {
+    ...project,
+    revision: project.revision ?? 1,
+    lastStructuralChangeAt: project.lastStructuralChangeAt ?? project.updatedAt
+  };
+}
+
+async function commitProjectMutation<T>(
+  projectId: string,
+  change: ProjectMutationChange,
+  write: (transaction: Transaction, database: Firestore) => T | Promise<T>
+): Promise<{ result: T; version: ProjectVersion; projectPatch: Pick<Project, "revision" | "updatedAt" | "lastStructuralChangeAt"> }> {
+  const safeProjectId = requirePathSegment(projectId, "projectId");
+  const database = requireDb();
+  const actor = requireCurrentUser();
+  const projectRef = doc(database, ...projectPath(safeProjectId));
+
+  return runTransaction(database, async (transaction) => {
+    const projectSnapshot = await transaction.get(projectRef);
+
+    if (!projectSnapshot.exists()) {
+      throw new Error(`Project ${safeProjectId} was not found in Firestore.`);
+    }
+
+    const project = projectSnapshot.data() as Project;
+    const previousRevision = project.revision ?? 0;
+    const revision = previousRevision + 1;
+    const now = new Date().toISOString();
+    const version: ProjectVersion = {
+      id: createId("version"),
+      projectId: safeProjectId,
+      revision,
+      previousRevision,
+      changeType: change.changeType,
+      summary: change.summary,
+      actorId: actor.uid,
+      metadata: change.metadata,
+      createdAt: now
+    };
+    const projectPatch = {
+      revision,
+      updatedAt: now,
+      lastStructuralChangeAt: now
+    };
+    const result = await write(transaction, database);
+
+    transaction.update(projectRef, projectPatch);
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectVersions, version.id), version);
+
+    return { result, version, projectPatch };
+  });
+}
+
 function requireCurrentUser() {
   if (!auth?.currentUser) {
     throw new Error("You must be signed in to use Firestore project data.");
   }
 
   return auth.currentUser;
+}
+
+function getFatalDependencyValidationMessage(tasks: Task[], dependencies: TaskDependency[]) {
+  return validateDependencies(tasks, dependencies)
+    .filter((issue) => issue.severity === "fatal")
+    .map((issue) => issue.message)
+    .join(" ");
 }
 
 function getDisplayName(user: FirebaseUser) {
@@ -196,7 +266,7 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promis
 
   const users = await readCollection<User>([...organizationPath(), rootCollectionMap.users]);
   const clients = await readCollection<Client>([...organizationPath(), rootCollectionMap.clients]);
-  const projects = await readCollection<Project>([...organizationPath(), rootCollectionMap.projects]);
+  const projects = (await readCollection<Project>([...organizationPath(), rootCollectionMap.projects])).map(withProjectRevisionDefaults);
 
   const [
     projectMembers,
@@ -208,6 +278,7 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promis
     documents,
     metrics,
     activityEvents,
+    projectVersions,
     taskCommentsByProject
   ] = await Promise.all([
     readProjectCollections<ProjectMember>(projects, projectCollectionMap.projectMembers),
@@ -219,6 +290,7 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promis
     readProjectCollections<ProjectDocument>(projects, projectCollectionMap.documents),
     readProjectCollections<ProjectMetric>(projects, projectCollectionMap.metrics),
     readProjectCollections<ProjectActivityEvent>(projects, projectCollectionMap.activityEvents),
+    readProjectCollections<ProjectVersion>(projects, projectCollectionMap.projectVersions),
     Promise.all(projects.map(async (project) => {
       const projectTasks = await readCollection<Task>([...projectPath(project.id), projectCollectionMap.tasks]);
       const comments = await Promise.all(
@@ -242,7 +314,8 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promis
     risks,
     documents,
     metrics,
-    activityEvents
+    activityEvents,
+    projectVersions
   };
 }
 
@@ -268,7 +341,7 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
     batch.set(doc(database, ...organizationPath(), rootCollectionMap.clients, requireRecordId(client, "client")), client);
   });
   initialState.projects.forEach((project) => {
-    batch.set(doc(database, ...organizationPath(), rootCollectionMap.projects, requireRecordId(project, "project")), project);
+    batch.set(doc(database, ...organizationPath(), rootCollectionMap.projects, requireRecordId(project, "project")), withProjectRevisionDefaults(project));
   });
 
   const writeProjectScoped = <T extends { id: string; projectId: string }>(items: T[], key: ProjectScopedCollectionKey) => {
@@ -315,6 +388,7 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
   writeProjectScoped(initialState.documents, "documents");
   writeProjectScoped(initialState.metrics, "metrics");
   writeProjectScoped(initialState.activityEvents, "activityEvents");
+  writeProjectScoped(initialState.projectVersions, "projectVersions");
 
   initialState.taskComments.forEach((comment) => {
     const taskId = requirePathSegment(comment.taskId, "taskComments.taskId");
@@ -348,20 +422,33 @@ export async function createTaskInFirestore(task: Omit<Task, "id" | "completedAt
     completedAt: task.status === "done" ? new Date().toISOString() : null
   };
 
-  await writeDocument([...projectPath(requirePathSegment(newTask.projectId, "task.projectId")), projectCollectionMap.tasks], newTask);
+  await commitProjectMutation(newTask.projectId, {
+    changeType: "task_created",
+    summary: `Created task ${newTask.title}.`,
+    metadata: { taskId: newTask.id }
+  }, (transaction, database) => {
+    transaction.set(doc(database, ...projectPath(requirePathSegment(newTask.projectId, "task.projectId")), projectCollectionMap.tasks, newTask.id), newTask);
+  });
   return newTask;
 }
 
-export async function updateTaskInFirestore(taskId: string, updates: Partial<Task>) {
+export async function updateTaskInFirestore(taskId: string, updates: Partial<Task>, projectId?: string) {
   const safeTaskId = requirePathSegment(taskId, "taskId");
-  const state = await loadProjectStateForCurrentUser();
-  const task = state.tasks.find((item) => item.id === safeTaskId);
+  const state = projectId ? null : await loadProjectStateForCurrentUser();
+  const task = state?.tasks.find((item) => item.id === safeTaskId);
+  const safeProjectId = projectId ?? task?.projectId;
 
-  if (!task) {
+  if (!safeProjectId) {
     throw new Error(`Task ${safeTaskId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, safeTaskId), updates);
+  await commitProjectMutation(safeProjectId, {
+    changeType: "task_updated",
+    summary: "Updated task.",
+    metadata: { taskId: safeTaskId, updates }
+  }, (transaction, database) => {
+    transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.tasks, safeTaskId), updates);
+  });
 }
 
 export async function updateTaskScheduleInFirestore(
@@ -372,22 +459,30 @@ export async function updateTaskScheduleInFirestore(
 }
 
 export async function batchUpdateTaskSchedulesInFirestore(
-  updates: Array<{ taskId: string; updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId" | "assigneeId" | "status" | "priority"> }>
+  updates: Array<{ taskId: string; updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId" | "assigneeId" | "status" | "priority"> }>,
+  projectId?: string
 ) {
-  const state = await loadProjectStateForCurrentUser();
-  const batch = writeBatch(requireDb());
+  const state = projectId ? null : await loadProjectStateForCurrentUser();
+  const safeProjectId = projectId ?? state?.tasks.find((task) => task.id === updates[0]?.taskId)?.projectId;
 
-  updates.forEach((item) => {
-    const task = state.tasks.find((candidate) => candidate.id === requirePathSegment(item.taskId, "taskId"));
+  if (!safeProjectId) {
+    throw new Error("Unable to resolve project for batch task update.");
+  }
 
-    if (!task) {
-      throw new Error(`Task ${item.taskId} was not found in Firestore.`);
-    }
+  if (state && updates.some((item) => !state.tasks.some((task) => task.id === item.taskId && task.projectId === safeProjectId))) {
+    throw new Error("One or more tasks were not found in Firestore.");
+  }
 
-    batch.update(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, task.id), item.updates);
+  await commitProjectMutation(safeProjectId, {
+    changeType: "tasks_batch_updated",
+    summary: `Updated ${updates.length} task schedules.`,
+    metadata: { taskCount: updates.length, taskIds: updates.map((item) => item.taskId) }
+  }, (transaction, database) => {
+    updates.forEach((item) => {
+      const safeTaskId = requirePathSegment(item.taskId, "taskId");
+      transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.tasks, safeTaskId), item.updates);
+    });
   });
-
-  await batch.commit();
 }
 
 export async function createMilestoneInFirestore(milestone: Omit<Milestone, "id">) {
@@ -396,35 +491,55 @@ export async function createMilestoneInFirestore(milestone: Omit<Milestone, "id"
     id: createId("milestone")
   };
 
-  await writeDocument([...projectPath(requirePathSegment(newMilestone.projectId, "milestone.projectId")), projectCollectionMap.milestones], newMilestone);
+  await commitProjectMutation(newMilestone.projectId, {
+    changeType: "milestone_created",
+    summary: `Created milestone ${newMilestone.name}.`,
+    metadata: { milestoneId: newMilestone.id }
+  }, (transaction, database) => {
+    transaction.set(doc(database, ...projectPath(requirePathSegment(newMilestone.projectId, "milestone.projectId")), projectCollectionMap.milestones, newMilestone.id), newMilestone);
+  });
   return newMilestone;
 }
 
-export async function updateMilestoneInFirestore(milestoneId: string, updates: Partial<Milestone>) {
+export async function updateMilestoneInFirestore(milestoneId: string, updates: Partial<Milestone>, projectId?: string) {
   const safeMilestoneId = requirePathSegment(milestoneId, "milestoneId");
-  const state = await loadProjectStateForCurrentUser();
-  const milestone = state.milestones.find((item) => item.id === safeMilestoneId);
+  const state = projectId ? null : await loadProjectStateForCurrentUser();
+  const milestone = state?.milestones.find((item) => item.id === safeMilestoneId);
+  const safeProjectId = projectId ?? milestone?.projectId;
 
-  if (!milestone) {
+  if (!safeProjectId) {
     throw new Error(`Milestone ${safeMilestoneId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(milestone.projectId), projectCollectionMap.milestones, safeMilestoneId), updates);
+  await commitProjectMutation(safeProjectId, {
+    changeType: "milestone_updated",
+    summary: "Updated milestone.",
+    metadata: { milestoneId: safeMilestoneId, updates }
+  }, (transaction, database) => {
+    transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.milestones, safeMilestoneId), updates);
+  });
 }
 
-export async function deleteMilestoneInFirestore(milestoneId: string) {
+export async function deleteMilestoneInFirestore(milestoneId: string, projectId?: string) {
   const safeMilestoneId = requirePathSegment(milestoneId, "milestoneId");
-  const state = await loadProjectStateForCurrentUser();
-  const milestone = state.milestones.find((item) => item.id === safeMilestoneId);
+  const state = projectId ? null : await loadProjectStateForCurrentUser();
+  const milestone = state?.milestones.find((item) => item.id === safeMilestoneId);
+  const safeProjectId = projectId ?? milestone?.projectId;
 
-  if (!milestone) {
+  if (!safeProjectId) {
     throw new Error(`Milestone ${safeMilestoneId} was not found in Firestore.`);
   }
 
-  await deleteDoc(doc(requireDb(), ...projectPath(milestone.projectId), projectCollectionMap.milestones, safeMilestoneId));
+  await commitProjectMutation(safeProjectId, {
+    changeType: "milestone_deleted",
+    summary: "Deleted milestone.",
+    metadata: { milestoneId: safeMilestoneId }
+  }, (transaction, database) => {
+    transaction.delete(doc(database, ...projectPath(safeProjectId), projectCollectionMap.milestones, safeMilestoneId));
+  });
 }
 
-export async function createTaskDependencyInFirestore(dependency: Omit<TaskDependency, "id">) {
+export async function createTaskDependencyInFirestore(dependency: Omit<TaskDependency, "id">, projectId?: string) {
   const state = await loadProjectStateForCurrentUser();
   const task = state.tasks.find((item) => item.id === requirePathSegment(dependency.taskId, "dependency.taskId"));
   const predecessor = state.tasks.find((item) => item.id === requirePathSegment(dependency.dependsOnTaskId, "dependency.dependsOnTaskId"));
@@ -437,39 +552,87 @@ export async function createTaskDependencyInFirestore(dependency: Omit<TaskDepen
     throw new Error("Dependencies cannot cross projects.");
   }
 
+  const safeProjectId = projectId ?? task.projectId;
+
+  if (safeProjectId !== task.projectId) {
+    throw new Error("Dependency project scope does not match the endpoint task project.");
+  }
+
   const newDependency: TaskDependency = {
     ...dependency,
     id: createId("dependency")
   };
+  const validationMessage = getFatalDependencyValidationMessage(state.tasks, [...state.taskDependencies, newDependency]);
 
-  await writeDocument([...projectPath(task.projectId), projectCollectionMap.taskDependencies], newDependency);
+  if (validationMessage) {
+    throw new Error(validationMessage);
+  }
+
+  await commitProjectMutation(safeProjectId, {
+    changeType: "dependency_created",
+    summary: "Created task dependency.",
+    metadata: { dependencyId: newDependency.id, taskId: dependency.taskId, dependsOnTaskId: dependency.dependsOnTaskId, type: dependency.type }
+  }, (transaction, database) => {
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.taskDependencies, newDependency.id), newDependency);
+  });
   return newDependency;
 }
 
-export async function updateTaskDependencyInFirestore(dependencyId: string, updates: Partial<TaskDependency>) {
+export async function updateTaskDependencyInFirestore(dependencyId: string, updates: Partial<TaskDependency>, projectId?: string) {
   const safeDependencyId = requirePathSegment(dependencyId, "dependencyId");
   const state = await loadProjectStateForCurrentUser();
   const dependency = state.taskDependencies.find((item) => item.id === safeDependencyId);
-  const task = dependency ? state.tasks.find((item) => item.id === dependency.taskId) : undefined;
+  const updatedDependency = dependency ? { ...dependency, ...updates } : undefined;
+  const task = updatedDependency ? state.tasks.find((item) => item.id === updatedDependency.taskId) : undefined;
+  const predecessor = updatedDependency ? state.tasks.find((item) => item.id === updatedDependency.dependsOnTaskId) : undefined;
+  const safeProjectId = projectId ?? task?.projectId;
 
-  if (!dependency || !task) {
+  if (!dependency || !updatedDependency || !safeProjectId) {
     throw new Error(`Dependency ${safeDependencyId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.taskDependencies, safeDependencyId), updates);
+  if (!task || !predecessor) {
+    throw new Error("Both dependency tasks must exist.");
+  }
+
+  if (safeProjectId !== task.projectId) {
+    throw new Error("Dependency project scope does not match the endpoint task project.");
+  }
+
+  const nextDependencies = state.taskDependencies.map((item) => item.id === safeDependencyId ? updatedDependency : item);
+  const validationMessage = getFatalDependencyValidationMessage(state.tasks, nextDependencies);
+
+  if (validationMessage) {
+    throw new Error(validationMessage);
+  }
+
+  await commitProjectMutation(safeProjectId, {
+    changeType: "dependency_updated",
+    summary: "Updated task dependency.",
+    metadata: { dependencyId: safeDependencyId, updates }
+  }, (transaction, database) => {
+    transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.taskDependencies, safeDependencyId), updates);
+  });
 }
 
-export async function deleteTaskDependencyInFirestore(dependencyId: string) {
+export async function deleteTaskDependencyInFirestore(dependencyId: string, projectId?: string) {
   const safeDependencyId = requirePathSegment(dependencyId, "dependencyId");
   const state = await loadProjectStateForCurrentUser();
   const dependency = state.taskDependencies.find((item) => item.id === safeDependencyId);
   const task = dependency ? state.tasks.find((item) => item.id === dependency.taskId) : undefined;
+  const safeProjectId = projectId ?? task?.projectId;
 
-  if (!dependency || !task) {
+  if (!dependency || !safeProjectId) {
     throw new Error(`Dependency ${safeDependencyId} was not found in Firestore.`);
   }
 
-  await deleteDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.taskDependencies, safeDependencyId));
+  await commitProjectMutation(safeProjectId, {
+    changeType: "dependency_deleted",
+    summary: "Deleted task dependency.",
+    metadata: { dependencyId: safeDependencyId }
+  }, (transaction, database) => {
+    transaction.delete(doc(database, ...projectPath(safeProjectId), projectCollectionMap.taskDependencies, safeDependencyId));
+  });
 }
 
 export async function createScheduleActivityEventInFirestore(event: Omit<ProjectActivityEvent, "id" | "createdAt">) {
@@ -481,6 +644,38 @@ export async function createScheduleActivityEventInFirestore(event: Omit<Project
 
   await writeDocument([...projectPath(requirePathSegment(newEvent.projectId, "activityEvent.projectId")), projectCollectionMap.activityEvents], newEvent);
   return newEvent;
+}
+
+export async function createProjectExportSnapshotInFirestore({
+  projectId,
+  packageId,
+  sourceHash,
+  packageJson
+}: Pick<ProjectExportSnapshot, "projectId" | "packageId" | "sourceHash" | "packageJson">) {
+  const safeProjectId = requirePathSegment(projectId, "projectId");
+  const actor = requireCurrentUser();
+  const database = requireDb();
+  const projectRef = doc(database, ...projectPath(safeProjectId));
+  const projectSnapshot = await getDoc(projectRef);
+
+  if (!projectSnapshot.exists()) {
+    throw new Error(`Project ${safeProjectId} was not found in Firestore.`);
+  }
+
+  const project = withProjectRevisionDefaults(projectSnapshot.data() as Project);
+  const snapshot: ProjectExportSnapshot = {
+    id: createId("export"),
+    projectId: safeProjectId,
+    baseRevision: project.revision ?? 1,
+    packageId,
+    sourceHash,
+    packageJson,
+    createdBy: actor.uid,
+    createdAt: new Date().toISOString()
+  };
+
+  await setDoc(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectExportSnapshots, snapshot.id), snapshot);
+  return snapshot;
 }
 
 export async function addTaskCommentInFirestore(taskId: string, comment: Omit<TaskComment, "id" | "taskId" | "createdAt">) {
@@ -509,20 +704,33 @@ export async function createRiskInFirestore(risk: Omit<ProjectRisk, "id">) {
     id: createId("risk")
   };
 
-  await writeDocument([...projectPath(requirePathSegment(newRisk.projectId, "risk.projectId")), projectCollectionMap.risks], newRisk);
+  await commitProjectMutation(newRisk.projectId, {
+    changeType: "risk_created",
+    summary: `Created risk ${newRisk.title}.`,
+    metadata: { riskId: newRisk.id }
+  }, (transaction, database) => {
+    transaction.set(doc(database, ...projectPath(requirePathSegment(newRisk.projectId, "risk.projectId")), projectCollectionMap.risks, newRisk.id), newRisk);
+  });
   return newRisk;
 }
 
-export async function updateRiskInFirestore(riskId: string, updates: Partial<ProjectRisk>) {
+export async function updateRiskInFirestore(riskId: string, updates: Partial<ProjectRisk>, projectId?: string) {
   const safeRiskId = requirePathSegment(riskId, "riskId");
-  const state = await loadProjectStateForCurrentUser();
-  const risk = state.risks.find((item) => item.id === safeRiskId);
+  const state = projectId ? null : await loadProjectStateForCurrentUser();
+  const risk = state?.risks.find((item) => item.id === safeRiskId);
+  const safeProjectId = projectId ?? risk?.projectId;
 
-  if (!risk) {
+  if (!safeProjectId) {
     throw new Error(`Risk ${safeRiskId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(risk.projectId), projectCollectionMap.risks, safeRiskId), updates);
+  await commitProjectMutation(safeProjectId, {
+    changeType: "risk_updated",
+    summary: "Updated risk.",
+    metadata: { riskId: safeRiskId, updates }
+  }, (transaction, database) => {
+    transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.risks, safeRiskId), updates);
+  });
 }
 
 export async function resetFirestoreProjectState() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectPath, parseProjectRoute } from "./projectRoutes";
+import { buildProjectPath, buildProjectVersionHistoryPath, parseProjectRoute } from "./projectRoutes";
 
 describe("project route helpers", () => {
   it("parses project portfolio and import routes", () => {
@@ -23,6 +23,13 @@ describe("project route helpers", () => {
     });
   });
 
+  it("parses version history links outside the project tabs", () => {
+    expect(parseProjectRoute("/projects/project_1/versions")).toEqual({
+      type: "version-history",
+      projectId: "project_1"
+    });
+  });
+
   it("flags unsupported project tabs", () => {
     expect(parseProjectRoute("/projects/project_1/nope")).toEqual({
       type: "invalid-tab",
@@ -33,5 +40,6 @@ describe("project route helpers", () => {
 
   it("builds encoded project paths", () => {
     expect(buildProjectPath("project one", "metrics")).toBe("/projects/project%20one/metrics");
+    expect(buildProjectVersionHistoryPath("project one")).toBe("/projects/project%20one/versions");
   });
 });

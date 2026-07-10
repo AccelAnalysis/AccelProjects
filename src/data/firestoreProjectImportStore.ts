@@ -23,6 +23,7 @@ import type {
   ProjectMetric,
   ProjectRisk,
   ProjectState,
+  ProjectVersion,
   Task,
   TaskDependency,
   User
@@ -57,7 +58,8 @@ const projectCollectionMap = {
   risks: "risks",
   documents: "documents",
   metrics: "metrics",
-  activityEvents: "activityEvents"
+  activityEvents: "activityEvents",
+  projectVersions: "versions"
 };
 const maxBatchWrites = 450;
 
@@ -250,6 +252,7 @@ export async function importProjectPackageToFirestore({
     clientId,
     mode: "create",
     sourceHash,
+    projectRevision: 1,
     status: "processing",
     createdBy: profile.id,
     createdAt: now,
@@ -306,7 +309,9 @@ export async function importProjectPackageToFirestore({
     currency: projectPackage.project.currency,
     ownerId: projectOwnerId,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    revision: 1,
+    lastStructuralChangeAt: now
   };
   writes.push({ ref: doc(requireDb(), ...organizationPath(), rootCollectionMap.projects, projectId), value: project });
 
@@ -439,6 +444,23 @@ export async function importProjectPackageToFirestore({
     createdAt: now
   };
   writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.activityEvents, event.id), value: event });
+
+  const version: ProjectVersion = {
+    id: createId("version"),
+    projectId,
+    revision: 1,
+    previousRevision: 0,
+    changeType: "project_imported",
+    summary: `Imported project package ${projectPackage.packageId}.`,
+    actorId: profile.id,
+    metadata: {
+      packageId: projectPackage.packageId,
+      sourceHash,
+      sourceName: projectPackage.source.name
+    },
+    createdAt: now
+  };
+  writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.projectVersions, version.id), value: version });
 
   await setDoc(getImportManifestRef(importId), manifest);
 

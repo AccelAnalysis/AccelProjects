@@ -173,6 +173,7 @@ describe("project import planning", () => {
       packageType: "accelprojects.project",
       schemaVersion: "1.0",
       projectId: "project_1",
+      projectRevision: 1,
       clientId: "client_1",
       mode: "create",
       sourceHash: "abc",

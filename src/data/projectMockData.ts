@@ -103,7 +103,9 @@ export const initialProjectState: ProjectState = {
       currency: "usd",
       ownerId: "user_sarah",
       createdAt: "2026-06-10T12:00:00.000Z",
-      updatedAt: "2026-07-09T14:00:00.000Z"
+      updatedAt: "2026-07-09T14:00:00.000Z",
+      revision: 1,
+      lastStructuralChangeAt: "2026-07-09T14:00:00.000Z"
     },
     {
       id: "project_northstar_portal",
@@ -120,7 +122,9 @@ export const initialProjectState: ProjectState = {
       currency: "usd",
       ownerId: "user_elena",
       createdAt: "2026-07-03T12:00:00.000Z",
-      updatedAt: "2026-07-08T16:30:00.000Z"
+      updatedAt: "2026-07-08T16:30:00.000Z",
+      revision: 1,
+      lastStructuralChangeAt: "2026-07-08T16:30:00.000Z"
     }
   ],
   projectMembers: [
@@ -376,6 +380,30 @@ export const initialProjectState: ProjectState = {
       message: "Email logged to project activity history.",
       metadata: { provider: "microsoft_graph" },
       createdAt: "2026-07-09T16:10:00.000Z"
+    }
+  ],
+  projectVersions: [
+    {
+      id: "version_hampton_initial",
+      projectId: "project_hampton_workforce",
+      revision: 1,
+      previousRevision: 0,
+      changeType: "project_imported",
+      summary: "Initial project workspace seeded.",
+      actorId: "user_sarah",
+      metadata: { source: "demo_seed" },
+      createdAt: "2026-07-09T14:00:00.000Z"
+    },
+    {
+      id: "version_northstar_initial",
+      projectId: "project_northstar_portal",
+      revision: 1,
+      previousRevision: 0,
+      changeType: "project_imported",
+      summary: "Initial project workspace seeded.",
+      actorId: "user_elena",
+      metadata: { source: "demo_seed" },
+      createdAt: "2026-07-08T16:30:00.000Z"
     }
   ]
 };
