@@ -79,6 +79,16 @@ export function validateProjectImportSemantics(projectPackage: ProjectImportPack
   }
 
   projectPackage.phases.forEach((phase, index) => {
+    if (typeof phase.sortOrder !== "number") {
+      addIssue(
+        issues,
+        "warning",
+        "phase_sort_order_missing",
+        `$.phases[${index}].sortOrder`,
+        `Phase "${phase.name}" has no sort order. AccelProjects will infer sequence from phase dates during import.`
+      );
+    }
+
     if (compareDates(phase.endDate, phase.startDate) < 0) {
       addIssue(issues, "error", "invalid_phase_date_order", `$.phases[${index}].endDate`, `Phase "${phase.name}" end date cannot be before start date.`);
     }

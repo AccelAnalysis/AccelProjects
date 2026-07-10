@@ -169,7 +169,7 @@ export type Phase = {
   status: "planned" | "active" | "complete" | "blocked";
   startDate: string;
   endDate: string;
-  sortOrder: number;
+  sortOrder?: number;
 };
 
 export type Task = {

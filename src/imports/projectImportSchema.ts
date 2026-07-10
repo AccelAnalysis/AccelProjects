@@ -117,6 +117,25 @@ function requireNumber(record: Record<string, unknown>, key: string, path: strin
   return value;
 }
 
+function optionalNumber(record: Record<string, unknown>, key: string, path: string, issues: ImportValidationIssue[], options?: { integer?: boolean }) {
+  const value = record[key];
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    addIssue(issues, "error", "required_number", `${path}.${key}`, `${path}.${key} must be a finite number when supplied.`);
+    return undefined;
+  }
+
+  if (options?.integer && !Number.isInteger(value)) {
+    addIssue(issues, "error", "integer_required", `${path}.${key}`, `${path}.${key} must be an integer.`);
+  }
+
+  return value;
+}
+
 function requireEnum<const T extends readonly string[]>(
   record: Record<string, unknown>,
   key: string,
@@ -358,7 +377,7 @@ export function validateProjectImportSchema(value: unknown): { package: ProjectI
     status: requireEnum(phase, "status", path, phaseStatuses, issues),
     startDate: requireString(phase, "startDate", path, issues),
     endDate: requireString(phase, "endDate", path, issues),
-    sortOrder: requireNumber(phase, "sortOrder", path, issues, { integer: true })
+    sortOrder: optionalNumber(phase, "sortOrder", path, issues, { integer: true })
   }));
 
   draft.milestones = requireArray(value, "milestones", "$", issues, (milestone, path) => ({

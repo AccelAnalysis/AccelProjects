@@ -30,6 +30,7 @@ import type {
 import { FIRESTORE_ORGANIZATION_ID, ensureFirestoreUserProfile, loadCurrentUserProfileFromFirestore } from "./firestoreProjectStore";
 import { createProjectImportPlan, createProjectImportSourceHash } from "../imports/projectImportPlanner";
 import { validateProjectImportSemantics } from "../imports/projectImportValidator";
+import { normalizePhaseSortOrder } from "../utils/phaseOrdering";
 import type {
   ExistingImportManifestSummary,
   PersonResolution,
@@ -269,7 +270,6 @@ export async function importProjectPackageToFirestore({
     errorMessage: ""
   };
   const writes: WriteOperation[] = [];
-  const phaseByKey = new Map(projectPackage.phases.map((phase) => [phase.key, phase]));
   const personResolutionByAlias = new Map(plan.personResolutions.map((person) => [person.alias, person]));
   const selectedUserIds = getSelectedUserIds(plan);
   const unresolvedPeople = plan.personResolutions.filter((person) => !person.selectedUserId);
@@ -321,10 +321,20 @@ export async function importProjectPackageToFirestore({
     writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.projectMembers, member.id), value: member });
   });
 
-  projectPackage.phases.forEach((phase) => {
+  const normalizedImportPhases = normalizePhaseSortOrder(projectPackage.phases.map((phase) => ({
+    id: requirePathSegment(phaseIds[phase.key], "phaseId"),
+    projectId,
+    name: phase.name,
+    status: phase.status,
+    startDate: phase.startDate,
+    endDate: phase.endDate,
+    sortOrder: phase.sortOrder
+  } satisfies Phase)));
+
+  normalizedImportPhases.forEach((phase) => {
     const value: Phase = {
-      id: requirePathSegment(phaseIds[phase.key], "phaseId"),
-      projectId,
+      id: phase.id,
+      projectId: phase.projectId,
       name: phase.name,
       status: phase.status,
       startDate: phase.startDate,

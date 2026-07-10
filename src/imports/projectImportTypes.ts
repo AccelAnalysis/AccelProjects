@@ -31,7 +31,7 @@ export type ProjectImportPhase = {
   status: Phase["status"];
   startDate: string;
   endDate: string;
-  sortOrder: number;
+  sortOrder?: number;
 };
 
 export type ProjectImportMilestone = {

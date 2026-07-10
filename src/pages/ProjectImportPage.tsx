@@ -12,6 +12,7 @@ import type {
   ProjectImportPackage,
   ProjectImportResult
 } from "../imports/projectImportTypes";
+import { buildProjectPath } from "../routing/projectRoutes";
 
 const maxImportFileBytes = 2 * 1024 * 1024;
 
@@ -481,7 +482,7 @@ export function ProjectImportPage({ projectState, role, onProjectImported }: Pro
               <h2>Import Results</h2>
               <p>{result.projectName} was imported and the manifest is complete.</p>
             </div>
-            <a className="action-button" href="/projects">Open Imported Project</a>
+            <a className="action-button" href={buildProjectPath(result.projectId, "plan")}>Open Imported Project</a>
           </div>
           <div className="page-grid four">
             <SummaryMetric label="Project" value={result.projectName} />

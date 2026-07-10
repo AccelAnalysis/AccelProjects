@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Circle,
   Clock3,
   FileText,
@@ -26,6 +28,10 @@ import type {
   User
 } from "../../types";
 import { mockTeamCapacity } from "../../data/projectMockData";
+import { addDays, formatDateOnly, todayDateOnly } from "../../utils/dateOnly";
+import { getPhaseSequenceLabel, sortPhases } from "../../utils/phaseOrdering";
+import { calculateScheduleRange } from "../../utils/scheduleRange";
+import { generateTimelineTicks, timelinePercent } from "../../utils/timelineTicks";
 
 export const taskStatusLabels: Record<Task["status"], string> = {
   done: "Complete",
@@ -37,7 +43,7 @@ export const taskStatusLabels: Record<Task["status"], string> = {
 };
 
 export function formatDate(date: string) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return formatDateOnly(date);
 }
 
 export function getUserName(users: User[], userId: string | null) {
@@ -45,7 +51,7 @@ export function getUserName(users: User[], userId: string | null) {
 }
 
 export function getPhaseName(phases: Phase[], phaseId: string) {
-  return phases.find((phase) => phase.id === phaseId)?.name ?? "Unassigned";
+  return getPhaseSequenceLabel(phases, phaseId);
 }
 
 export function StatusBadge({ label, tone = "info" }: { label: string; tone?: "success" | "warning" | "danger" | "info" }) {
@@ -391,14 +397,17 @@ export function NewTaskForm({
   onCreateTask: (task: Omit<Task, "id" | "completedAt">) => void;
   onCancel: () => void;
 }) {
-  const defaultPhase = phases[0]?.id ?? "";
+  const orderedPhases = sortPhases(phases);
+  const defaultPhase = orderedPhases[0]?.id ?? "";
+  const selectedPhase = orderedPhases.find((phase) => phase.id === defaultPhase);
+  const defaultStartDate = selectedPhase?.startDate ?? todayDateOnly();
   const [draft, setDraft] = useState({
     title: "",
     description: "",
     phaseId: defaultPhase,
     assigneeId: users.find((user) => user.role !== "client")?.id ?? "",
-    startDate: "2026-07-09",
-    dueDate: "2026-07-16",
+    startDate: defaultStartDate,
+    dueDate: selectedPhase?.endDate ?? addDays(defaultStartDate, 7),
     priority: "medium" as Task["priority"],
     status: "not_started" as Task["status"],
     estimateHours: 4
@@ -434,10 +443,14 @@ export function NewTaskForm({
         <label>
           Phase
           <select value={draft.phaseId} onChange={(event) => setDraft({ ...draft, phaseId: event.target.value })}>
-            {phases.map((phase) => (
-              <option key={phase.id} value={phase.id}>{phase.name}</option>
+            {orderedPhases.map((phase, index) => (
+              <option key={phase.id} value={phase.id}>{index + 1}. {phase.name}</option>
             ))}
           </select>
+        </label>
+        <label>
+          Start Date
+          <input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} />
         </label>
         <label>
           Owner
@@ -559,23 +572,8 @@ function useTaskCommentDraft(taskId: string): [string, (value: string) => void] 
   ];
 }
 
-function toDateNumber(value: string) {
-  return new Date(`${value}T12:00:00`).getTime();
-}
-
-function timelinePosition(date: string, start: string, end: string) {
-  const total = toDateNumber(end) - toDateNumber(start);
-  const current = toDateNumber(date) - toDateNumber(start);
-
-  if (total <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(100, (current / total) * 100));
-}
-
 function timelineTone(task: Task) {
-  const today = "2026-07-09";
+  const today = todayDateOnly();
 
   if (task.status === "done") {
     return "success";
@@ -600,58 +598,154 @@ export function TimelineSection({
   project,
   phases,
   tasks,
-  dependencies
+  dependencies,
+  collapsedPhaseIds = new Set<string>(),
+  onTogglePhase,
+  onOpenTask
 }: {
   project: Project;
   phases: Phase[];
   tasks: Task[];
   dependencies: TaskDependency[];
+  collapsedPhaseIds?: Set<string>;
+  onTogglePhase?: (phaseId: string) => void;
+  onOpenTask?: (taskId: string) => void;
 }) {
-  const todayOffset = timelinePosition("2026-07-09", project.startDate, project.targetDate);
+  const orderedPhases = sortPhases(phases);
+  const orderedTasks = [...tasks].sort((left, right) => (
+    left.startDate.localeCompare(right.startDate)
+    || left.dueDate.localeCompare(right.dueDate)
+    || left.title.localeCompare(right.title)
+  ));
+  const range = calculateScheduleRange(project, orderedPhases, orderedTasks);
+  const ticks = generateTimelineTicks(range);
+  const today = todayDateOnly();
+  const todayVisible = today >= range.startDate && today <= range.endDate;
+  const totalDays = Math.max(range.totalDays, 1);
+  const dayWidth = totalDays <= 45 ? 28 : totalDays <= 180 ? 12 : 6;
+  const timelineWidth = Math.max(760, totalDays * dayWidth);
+  const rows = orderedPhases.flatMap((phase, phaseIndex) => {
+    const phaseTasks = orderedTasks.filter((task) => task.phaseId === phase.id);
+    const phaseRows = [{
+      type: "phase" as const,
+      phase,
+      phaseIndex,
+      task: null
+    }];
+
+    if (!collapsedPhaseIds.has(phase.id)) {
+      return [
+        ...phaseRows,
+        ...phaseTasks.map((task) => ({
+          type: "task" as const,
+          phase,
+          phaseIndex,
+          task
+        }))
+      ];
+    }
+
+    return phaseRows;
+  });
 
   return (
-    <div className="timeline-placeholder">
-      <div className="timeline-dates">
-        <span>{formatDate(project.startDate)}</span>
-        <span>Jul 1</span>
-        <span>Jul 15</span>
-        <span>Aug 1</span>
-        <span>Aug 15</span>
-        <span>{formatDate(project.targetDate)}</span>
-      </div>
-      <div className="timeline-body">
-        <span className="today-marker" style={{ left: `${todayOffset}%` }}>Today</span>
-        {phases.map((phase) => {
-          const start = timelinePosition(phase.startDate, project.startDate, project.targetDate);
-          const end = timelinePosition(phase.endDate, project.startDate, project.targetDate);
-
-          return (
-            <div className="timeline-row" key={phase.id}>
-              <strong>{phase.name}</strong>
-              <div className="timeline-track">
-                <span className={`phase-bar status-${phase.status}`} style={{ marginLeft: `${start}%`, width: `${Math.max(end - start, 8)}%` }}>
-                  {formatDate(phase.startDate)} - {formatDate(phase.endDate)}
-                </span>
+    <div className="gantt-workspace" data-range-start={range.startDate} data-range-end={range.endDate}>
+      {!range.available ? (
+        <div className="table-empty">Timeline dates are unavailable. Add project, phase, or task dates to build the schedule.</div>
+      ) : null}
+      <div className="gantt-scroll" tabIndex={0} aria-label={`Schedule timeline from ${formatDate(range.startDate)} to ${formatDate(range.endDate)}`}>
+        <div className="gantt-grid" style={{ width: `${320 + timelineWidth}px`, gridTemplateColumns: `320px ${timelineWidth}px` }}>
+          <div className="gantt-cell gantt-corner">Phase and task</div>
+          <div className="gantt-cell gantt-date-header">
+            {ticks.map((tick) => (
+              <span className="gantt-tick" key={tick.date} style={{ left: `${tick.position}%` }}>
+                {tick.label}
+              </span>
+            ))}
+            {todayVisible ? (
+              <span className="gantt-today-line" style={{ left: `${timelinePercent(today, range)}%` }}>
+                Today
+              </span>
+            ) : null}
+          </div>
+          {rows.length === 0 ? (
+            <>
+              <div className="gantt-cell gantt-left-cell">No phases or tasks</div>
+              <div className="gantt-cell gantt-row-track">
+                Add phases and dated tasks to build the project plan.
               </div>
-            </div>
-          );
-        })}
-        {tasks.map((task) => {
-          const start = timelinePosition(task.startDate, project.startDate, project.targetDate);
-          const end = timelinePosition(task.dueDate, project.startDate, project.targetDate);
-          const dependency = dependencies.find((item) => item.taskId === task.id);
+            </>
+          ) : null}
+          {rows.map((row) => {
+            if (row.type === "phase") {
+              const start = timelinePercent(row.phase.startDate, range);
+              const end = timelinePercent(row.phase.endDate, range);
+              const collapsed = collapsedPhaseIds.has(row.phase.id);
+              const phaseTasks = orderedTasks.filter((task) => task.phaseId === row.phase.id);
 
-          return (
-            <div className="timeline-row task-timeline-row" key={task.id}>
-              <span>{task.title}</span>
-              <div className="timeline-track thin">
-                <span className={`task-bar ${timelineTone(task)}`} style={{ marginLeft: `${start}%`, width: `${Math.max(end - start, 4)}%` }}>
-                  {dependency ? <Link2 size={13} aria-hidden="true" /> : null}
-                </span>
+              return (
+                <div className="gantt-row phase-gantt-row" key={`phase-${row.phase.id}`}>
+                  <div className="gantt-cell gantt-left-cell">
+                    <button
+                      className="gantt-name-button phase-name-button"
+                      type="button"
+                      onClick={() => onTogglePhase?.(row.phase.id)}
+                      aria-expanded={!collapsed}
+                    >
+                      {collapsed ? <ChevronRight size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+                      <span title={`${row.phaseIndex + 1}. ${row.phase.name}`}>{row.phaseIndex + 1}. {row.phase.name}</span>
+                      <small>{phaseTasks.length} task{phaseTasks.length === 1 ? "" : "s"}</small>
+                    </button>
+                  </div>
+                  <div className="gantt-cell gantt-row-track">
+                    <span
+                      className={`gantt-phase-bar status-${row.phase.status}`}
+                      style={{ left: `${start}%`, width: `${Math.max(end - start, 3)}%` }}
+                      title={`${row.phase.name}: ${formatDate(row.phase.startDate)} to ${formatDate(row.phase.endDate)}`}
+                    >
+                      {formatDate(row.phase.startDate)} - {formatDate(row.phase.endDate)}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            const task = row.task;
+            const start = timelinePercent(task.startDate, range);
+            const end = timelinePercent(task.dueDate, range);
+            const dependency = dependencies.find((item) => item.taskId === task.id);
+            const taskLabel = `Open task: ${task.title}, ${formatDate(task.startDate)} through ${formatDate(task.dueDate)}`;
+
+            return (
+              <div className="gantt-row task-gantt-row" key={`task-${task.id}`}>
+                <div className="gantt-cell gantt-left-cell">
+                  <button
+                    className="gantt-name-button task-name-button"
+                    type="button"
+                    onClick={() => onOpenTask?.(task.id)}
+                    title={task.title}
+                    aria-label={taskLabel}
+                  >
+                    <span>{task.title}</span>
+                    <small>{taskStatusLabels[task.status]}</small>
+                  </button>
+                </div>
+                <div className="gantt-cell gantt-row-track">
+                  <button
+                    className={`gantt-task-bar ${timelineTone(task)}`}
+                    type="button"
+                    style={{ left: `${start}%`, width: `${Math.max(end - start, 2)}%` }}
+                    onClick={() => onOpenTask?.(task.id)}
+                    aria-label={taskLabel}
+                    title={taskLabel}
+                  >
+                    {dependency ? <Link2 size={13} aria-hidden="true" /> : null}
+                  </button>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
