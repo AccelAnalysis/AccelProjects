@@ -19,6 +19,20 @@ export function DashboardPage({
   canViewInternal
 }: ProjectPageProps) {
   const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
+
+  if (!project) {
+    return (
+      <section className="panel empty-state">
+        <div className="panel-header">
+          <div>
+            <h1>No project data found</h1>
+            <p>Seed demo data or import a new project to open the dashboard.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
   const phases = projectState.phases.filter((phase) => phase.projectId === project.id);
   const activePhase = phases.find((phase) => phase.status === "active") ?? phases[0];

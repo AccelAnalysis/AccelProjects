@@ -78,6 +78,7 @@ import {
   createTaskDependencyInFirestore,
   deleteMilestoneInFirestore,
   deleteTaskDependencyInFirestore,
+  ensureFirestoreUserProfile,
   getFirestorePermissionMessage,
   loadCurrentUserProfileFromFirestore,
   loadProjectStateFromFirestore,
@@ -620,9 +621,10 @@ function AppShell() {
 
     async function loadState() {
       try {
+        await ensureFirestoreUserProfile(user);
         const [profile, state] = await Promise.all([
-          loadCurrentUserProfileFromFirestore(user),
-          loadProjectStateFromFirestore(user)
+          loadCurrentUserProfileFromFirestore(user, { ensureProfile: false }),
+          loadProjectStateFromFirestore(user, { ensureProfile: false })
         ]);
 
         if (!active) {

@@ -222,8 +222,10 @@ export async function ensureFirestoreUserProfile(user: FirebaseUser) {
   } satisfies User, { merge: true });
 }
 
-export async function loadCurrentUserProfileFromFirestore(user: FirebaseUser) {
-  await ensureFirestoreUserProfile(user);
+export async function loadCurrentUserProfileFromFirestore(user: FirebaseUser, options: { ensureProfile?: boolean } = {}) {
+  if (options.ensureProfile ?? true) {
+    await ensureFirestoreUserProfile(user);
+  }
 
   const userId = requirePathSegment(user.uid, "auth.uid");
   const userRef = doc(requireDb(), ...organizationPath(), rootCollectionMap.users, userId);
@@ -261,8 +263,10 @@ async function deleteCollection(pathSegments: string[]) {
   await Promise.all(snapshot.docs.map((item) => deleteDoc(item.ref)));
 }
 
-export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promise<ProjectState> {
-  await ensureFirestoreUserProfile(_user);
+export async function loadProjectStateFromFirestore(_user: FirebaseUser, options: { ensureProfile?: boolean } = {}): Promise<ProjectState> {
+  if (options.ensureProfile ?? true) {
+    await ensureFirestoreUserProfile(_user);
+  }
 
   const users = await readCollection<User>([...organizationPath(), rootCollectionMap.users]);
   const clients = await readCollection<Client>([...organizationPath(), rootCollectionMap.clients]);
