@@ -30,8 +30,16 @@ export function buildProjectPath(projectId: string, tab: ProjectTabId = defaultP
   return `/projects/${encodeURIComponent(projectId)}/${tab}`;
 }
 
-export function buildProjectImportPath(projectId?: string) {
-  return projectId ? `/projects/${encodeURIComponent(projectId)}/import` : "/projects/import";
+export function buildProjectCreateImportPath() {
+  return "/projects/import";
+}
+
+export function buildProjectImportPath() {
+  return buildProjectCreateImportPath();
+}
+
+export function buildProjectUpdatePath(projectId: string) {
+  return `/projects/${encodeURIComponent(projectId)}/update`;
 }
 
 export function buildProjectVersionHistoryPath(projectId: string) {
@@ -39,7 +47,7 @@ export function buildProjectVersionHistoryPath(projectId: string) {
 }
 
 export function parseProjectRoute(pathname: string): {
-  type: "portfolio" | "import" | "workspace" | "version-history" | "invalid-tab" | "none";
+  type: "portfolio" | "import" | "update" | "legacy-project-import" | "workspace" | "version-history" | "invalid-tab" | "none";
   projectId?: string;
   tab?: ProjectTabId;
   attemptedTab?: string;
@@ -63,7 +71,11 @@ export function parseProjectRoute(pathname: string): {
   const tab = segments[2] ?? defaultProjectTab;
 
   if (tab === "import") {
-    return { type: "import", projectId };
+    return { type: "legacy-project-import", projectId };
+  }
+
+  if (tab === "update" && segments.length === 3) {
+    return { type: "update", projectId };
   }
 
   if (tab === "versions" && segments.length === 3) {

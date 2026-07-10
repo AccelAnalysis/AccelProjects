@@ -271,7 +271,8 @@ export type ProjectVersion = {
     | "dependency_deleted"
     | "risk_created"
     | "risk_updated"
-    | "project_exported";
+    | "project_exported"
+    | "project_file_updated";
   summary: string;
   actorId: string;
   metadata: Record<string, unknown>;
@@ -282,11 +283,38 @@ export type ProjectExportSnapshot = {
   id: string;
   projectId: string;
   baseRevision: number;
+  resultRevision?: number;
   packageId: string;
   sourceHash: string;
+  sourceUpdateHash?: string;
+  sourceSnapshotId?: string;
+  resultStateHash?: string;
+  snapshotType?: "manual_export" | "revision_result";
   createdBy: string;
   createdAt: string;
   packageJson: string;
+};
+
+export type ProjectUpdateManifest = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  sourceSnapshotId: string;
+  sourcePackageId: string;
+  sourceSnapshotHash: string;
+  uploadedFileHash: string;
+  resultStateHash: string;
+  baseRevision: number;
+  resultRevision: number;
+  versionId: string;
+  actorId: string;
+  appliedAt: string;
+  changeCounts: {
+    added: number;
+    modified: number;
+    removed: number;
+    byEntityType: Record<string, { added: number; modified: number; removed: number }>;
+  };
 };
 
 export type ProjectState = {

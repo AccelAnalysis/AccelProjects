@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "1.1",
+  "packageType": "accelprojects.project.export",
+  "packageId": "export-generic-demo-r1-2026-07-10T12-00-00-000Z",
+  "exportSnapshotId": "export_generic_demo_snapshot",
+  "exportedAt": "2026-07-10T12:00:00.000Z",
+  "baseProjectId": "project_generic_demo",
+  "baseRevision": 1,
+  "client": {
+    "id": "client_generic",
+    "organizationId": "org_accel_projects",
+    "name": "Generic Client",
+    "contactName": "Project Sponsor",
+    "email": "sponsor@example.invalid",
+    "phone": "+15555550100",
+    "status": "active"
+  },
+  "project": {
+    "id": "project_generic_demo",
+    "organizationId": "org_accel_projects",
+    "clientId": "client_generic",
+    "name": "Generic Demo Project",
+    "summary": "Generic exported project update fixture.",
+    "status": "active",
+    "health": "on_track",
+    "priority": "medium",
+    "startDate": "2026-07-01",
+    "targetDate": "2026-08-01",
+    "budget": 1000,
+    "currency": "usd",
+    "ownerId": "user_project_manager",
+    "createdAt": "2026-07-01T12:00:00.000Z",
+    "updatedAt": "2026-07-10T12:00:00.000Z",
+    "revision": 1,
+    "lastStructuralChangeAt": "2026-07-10T12:00:00.000Z"
+  },
+  "members": [
+    {
+      "id": "member_project_manager",
+      "projectId": "project_generic_demo",
+      "userId": "user_project_manager",
+      "role": "lead"
+    }
+  ],
+  "phases": [
+    {
+      "id": "phase_discovery",
+      "projectId": "project_generic_demo",
+      "name": "Discovery",
+      "status": "active",
+      "startDate": "2026-07-01",
+      "endDate": "2026-07-15",
+      "sortOrder": 1
+    }
+  ],
+  "milestones": [],
+  "tasks": [
+    {
+      "id": "task_prepare_brief",
+      "projectId": "project_generic_demo",
+      "phaseId": "phase_discovery",
+      "title": "Prepare executive brief",
+      "description": "Updated task title in a generic fixture.",
+      "status": "in_progress",
+      "priority": "medium",
+      "assigneeId": "user_project_manager",
+      "startDate": "2026-07-02",
+      "dueDate": "2026-07-08",
+      "estimateHours": 8,
+      "completedAt": null
+    },
+    {
+      "id": "new_task_client_review",
+      "projectId": "project_generic_demo",
+      "phaseId": "phase_discovery",
+      "title": "Client review",
+      "description": "New task using a temporary ID.",
+      "status": "todo",
+      "priority": "medium",
+      "assigneeId": null,
+      "startDate": "2026-07-09",
+      "dueDate": "2026-07-10",
+      "estimateHours": 4,
+      "completedAt": null
+    }
+  ],
+  "taskDependencies": [
+    {
+      "id": "new_dependency_client_review",
+      "taskId": "new_task_client_review",
+      "dependsOnTaskId": "task_prepare_brief",
+      "type": "finish_to_start"
+    }
+  ],
+  "risks": [],
+  "documents": [],
+  "metrics": []
+}
