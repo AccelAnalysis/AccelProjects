@@ -103,6 +103,17 @@ describe("project import validation", () => {
     expect(issueCodes(sampleProjectImport)).toContain("missing_assignee");
   });
 
+  it("accepts phases without sort order and reports a compatibility warning", () => {
+    const pkg = cloneSample();
+    ((pkg.phases as Array<Record<string, unknown>>)[0]).sortOrder = undefined;
+
+    const result = validate(pkg);
+
+    expect(result.package).not.toBeNull();
+    expect(result.issues.filter((issue) => issue.severity === "error")).toHaveLength(0);
+    expect(result.issues.map((issue) => issue.code)).toContain("phase_sort_order_missing");
+  });
+
   it("rejects invalid date ordering", () => {
     const pkg = cloneSample();
     (pkg.project as Record<string, unknown>).targetDate = "2026-07-01";

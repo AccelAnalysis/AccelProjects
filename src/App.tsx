@@ -1,18 +1,16 @@
 import {
-  BarChart3,
   Bell,
   BriefcaseBusiness,
-  CalendarDays,
   ClipboardList,
-  FileText,
   FlaskConical,
   Gauge,
+  Home,
+  Inbox,
   LogOut,
-  MessageSquare,
+  MoreHorizontal,
   Plus,
   Search,
   Settings,
-  Upload,
   Users
 } from "lucide-react";
 import type { User as FirebaseUser } from "firebase/auth";
@@ -25,12 +23,18 @@ import { DashboardPage } from "./pages/DashboardPage";
 import {
   ClientsPage,
   DocumentsPage,
+  LegacyProjectRoutePage,
   MetricsPage,
   MessagesPage,
+  OverviewPage,
+  PlaceholderPage,
+  PlanPage,
+  ProjectSettingsPage,
   ProjectsPage,
+  RisksPage,
   SettingsPage,
   TasksPage,
-  TimelinePage
+  TeamPage
 } from "./pages/ProjectModulePages";
 import { PaymentCancelPage } from "./pages/PaymentCancelPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
@@ -43,6 +47,15 @@ import {
   ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
+import {
+  buildProjectImportPath,
+  buildProjectPath,
+  defaultProjectTab,
+  legacyProjectRouteMap,
+  parseProjectRoute,
+  projectTabs,
+  type ProjectTabId
+} from "./routing/projectRoutes";
 import {
   canAddTaskComment,
   canEditTask,
@@ -70,18 +83,19 @@ import {
   saveSelectedProjectId
 } from "./data/projectStore";
 import type { ProjectRisk, ProjectState, Task, User, UserRole } from "./types";
+import { formatDateOnly } from "./utils/dateOnly";
 import accelLogo from "../Accel_GOH_Logo.png";
 
-const navItems = [
-  { href: "/", label: "Dashboard", icon: Gauge },
+const primaryNavItems = [
+  { href: "/", label: "Home", icon: Home },
+  { href: "/my-work", label: "My Work", icon: ClipboardList },
   { href: "/projects", label: "Projects", icon: BriefcaseBusiness },
-  { href: "/projects/import", label: "Import Project", icon: Upload },
-  { href: "/tasks", label: "Tasks & Phases", icon: ClipboardList },
-  { href: "/timeline", label: "Gantt & Timeline", icon: CalendarDays },
-  { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/clients", label: "Clients", icon: Users },
-  { href: "/documents", label: "Document Hub", icon: FileText },
-  { href: "/metrics", label: "Metrics & Reports", icon: BarChart3 },
+  { href: "/portfolio", label: "Portfolio", icon: Gauge },
+  { href: "/notifications", label: "Notifications", icon: Inbox }
+];
+
+const utilityNavItems = [
   { href: "/billing", label: "Billing", icon: ClipboardList },
   { href: "/system-tests", label: "System Tests", icon: FlaskConical },
   { href: "/settings", label: "Settings", icon: Settings }
@@ -90,6 +104,7 @@ const navItems = [
 export type ProjectPageProps = {
   projectState: ProjectState;
   selectedProjectId: string;
+  activeProjectTab: ProjectTabId;
   role: UserRole;
   userProfile: User | null;
   canEdit: boolean;
@@ -111,6 +126,9 @@ export type ProjectPageProps = {
   onResetProjectState: () => void;
   onSeedProjectState: () => void;
   onProjectImported: (projectId: string) => Promise<void>;
+  onNavigate: (path: string, options?: { replace?: boolean }) => void;
+  onProjectChange: (projectId: string) => void;
+  onNewTask: () => void;
 };
 
 const emptyProjectState: ProjectState = {
@@ -129,43 +147,110 @@ const emptyProjectState: ProjectState = {
   activityEvents: []
 };
 
-function getRoute(props: ProjectPageProps) {
-  const path = window.location.pathname;
+function getRoute(props: ProjectPageProps, pathname: string) {
+  const path = pathname;
+  const projectRoute = parseProjectRoute(path);
 
-  if (path === "/") {
-    return <DashboardPage {...props} />;
-  }
-
-  if (path === "/projects") {
+  if (projectRoute.type === "portfolio") {
     return <ProjectsPage {...props} />;
   }
 
-  if (path === "/projects/import") {
+  if (projectRoute.type === "import") {
     return <ProjectImportPage {...props} />;
   }
 
-  if (path === "/tasks") {
-    return <TasksPage {...props} />;
+  if (projectRoute.type === "invalid-tab") {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Project area not found</h1>
+            <p>{projectRoute.attemptedTab ? `"${projectRoute.attemptedTab}" is not a supported project tab.` : "This project area is unavailable."}</p>
+          </div>
+          <button className="action-button" type="button" onClick={() => props.onNavigate(buildProjectPath(projectRoute.projectId ?? props.selectedProjectId, "plan"), { replace: true })}>
+            Open Plan
+          </button>
+        </div>
+      </section>
+    );
   }
 
-  if (path === "/timeline") {
-    return <TimelinePage {...props} />;
+  if (projectRoute.type === "workspace") {
+    if (!props.projectState.projects.some((project) => project.id === projectRoute.projectId)) {
+      return (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h1>Project unavailable</h1>
+              <p>This project was deleted, is inaccessible, or is not part of your workspace.</p>
+            </div>
+            <button className="action-button" type="button" onClick={() => props.onNavigate("/projects")}>
+              Return to Projects
+            </button>
+          </div>
+        </section>
+      );
+    }
+
+    if (projectRoute.tab === "plan") {
+      return <PlanPage {...props} />;
+    }
+
+    if (projectRoute.tab === "overview") {
+      return <OverviewPage {...props} />;
+    }
+
+    if (projectRoute.tab === "tasks") {
+      return <TasksPage {...props} />;
+    }
+
+    if (projectRoute.tab === "risks") {
+      return <RisksPage {...props} />;
+    }
+
+    if (projectRoute.tab === "messages") {
+      return <MessagesPage {...props} />;
+    }
+
+    if (projectRoute.tab === "files") {
+      return <DocumentsPage {...props} />;
+    }
+
+    if (projectRoute.tab === "metrics") {
+      return <MetricsPage {...props} />;
+    }
+
+    if (projectRoute.tab === "team") {
+      return <TeamPage {...props} />;
+    }
+
+    if (projectRoute.tab === "settings") {
+      return <ProjectSettingsPage {...props} />;
+    }
   }
 
-  if (path === "/messages") {
-    return <MessagesPage {...props} />;
+  if (path in legacyProjectRouteMap) {
+    return <LegacyProjectRoutePage {...props} targetTab={legacyProjectRouteMap[path]} />;
+  }
+
+  if (path === "/") {
+    return <DashboardPage {...props} />;
   }
 
   if (path === "/clients") {
     return <ClientsPage {...props} />;
   }
 
-  if (path === "/documents") {
-    return <DocumentsPage {...props} />;
+  if (path === "/my-work") {
+    return <PlaceholderPage title="My Work" description="A cross-project view of assigned work will live here. For now, open a project Plan to manage tasks." />;
   }
 
-  if (path === "/metrics") {
-    return <MetricsPage {...props} />;
+  if (path === "/portfolio") {
+    return <PlaceholderPage title="Portfolio" description="Portfolio-level reporting will expand here. Projects remains the entry point for individual project workspaces." />;
+  }
+
+  if (path === "/notifications") {
+    return <PlaceholderPage title="Notifications" description="Project notifications and delivery alerts will be managed here in a later phase." />;
   }
 
   if (path === "/billing") {
@@ -199,20 +284,51 @@ function getRoute(props: ProjectPageProps) {
   return <DashboardPage {...props} />;
 }
 
-function isActiveRoute(href: string) {
-  const path = window.location.pathname;
+function isActiveRoute(href: string, pathname: string) {
+  const path = pathname;
 
   if (href === "/") {
     return path === "/";
   }
 
+  if (href === "/projects") {
+    return path === "/projects" || path.startsWith("/projects/");
+  }
+
   return path === href || (href === "/system-tests" && (path === "/admin" || path === "/test"));
 }
 
-function Sidebar() {
+function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: (path: string) => void }) {
+  function renderNavItem(item: typeof primaryNavItems[number]) {
+    const Icon = item.icon;
+    const active = isActiveRoute(item.href, pathname);
+
+    return (
+      <a
+        className={active ? "sidebar-link active" : "sidebar-link"}
+        href={item.href}
+        key={item.href}
+        onClick={(event) => {
+          event.preventDefault();
+          onNavigate(item.href);
+        }}
+      >
+        <Icon size={18} aria-hidden="true" />
+        <span>{item.label}</span>
+      </a>
+    );
+  }
+
   return (
     <aside className="sidebar">
-      <a className="sidebar-brand" href="/">
+      <a
+        className="sidebar-brand"
+        href="/"
+        onClick={(event) => {
+          event.preventDefault();
+          onNavigate("/");
+        }}
+      >
         <span className="brand-logo">
           <img src={accelLogo} alt="AccelProjects" />
         </span>
@@ -222,17 +338,10 @@ function Sidebar() {
         </span>
       </a>
       <nav className="sidebar-nav">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const active = isActiveRoute(item.href);
-
-          return (
-            <a className={active ? "sidebar-link active" : "sidebar-link"} href={item.href} key={item.href}>
-              <Icon size={18} aria-hidden="true" />
-              <span>{item.label}</span>
-            </a>
-          );
-        })}
+        {primaryNavItems.map(renderNavItem)}
+      </nav>
+      <nav className="sidebar-nav sidebar-utility-nav" aria-label="Utilities">
+        {utilityNavItems.map(renderNavItem)}
       </nav>
     </aside>
   );
@@ -315,18 +424,24 @@ function TopHeader({
   );
 }
 
-function ProjectHeader({
+function ProjectContextBar({
   projectState,
   selectedProjectId,
   onProjectChange,
-  canEdit,
-  onNewTask
+  activeTab,
+  canCreateTasks,
+  canManage,
+  onNewTask,
+  onNavigate
 }: {
   projectState: ProjectState;
   selectedProjectId: string;
   onProjectChange: (projectId: string) => void;
-  canEdit: boolean;
+  activeTab: ProjectTabId;
+  canCreateTasks: boolean;
+  canManage: boolean;
   onNewTask: () => void;
+  onNavigate: (path: string) => void;
 }) {
   const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
   const client = projectState.clients.find((item) => item.id === project.clientId);
@@ -336,7 +451,7 @@ function ProjectHeader({
   const progress = tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0;
 
   return (
-    <section className="project-header">
+    <section className="project-context-bar">
       <div>
         <p className="eyebrow">{client?.name ?? "Client"}</p>
         <div className="project-title-row">
@@ -350,6 +465,10 @@ function ProjectHeader({
           <span style={{ width: `${progress}%` }} />
         </div>
       </div>
+      <div className="project-context-meta">
+        <span><strong>{progress}%</strong> task progress</span>
+        <span><strong>{formatDateOnly(project.targetDate)}</strong> target</span>
+      </div>
       <div className="project-header-actions">
         <ProjectSelector
           clients={projectState.clients}
@@ -357,14 +476,58 @@ function ProjectHeader({
           selectedProjectId={selectedProjectId}
           onProjectChange={onProjectChange}
         />
-        {canEdit ? (
+        {canCreateTasks ? (
           <button className="action-button" type="button" onClick={onNewTask}>
             <Plus size={18} aria-hidden="true" />
             New Task
           </button>
         ) : null}
+        {canManage ? (
+          <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectImportPath(project.id))}>
+            Import
+          </button>
+        ) : null}
+        <details className="project-actions-menu">
+          <summary aria-label="More project actions">
+            <MoreHorizontal size={18} aria-hidden="true" />
+          </summary>
+          <div className="project-actions-popover">
+            <button type="button" onClick={() => onNavigate(buildProjectPath(project.id, "settings"))}>Project Settings</button>
+            <button type="button" onClick={() => onNavigate("/projects")}>Return to Projects</button>
+            <button type="button" disabled>Export Project</button>
+          </div>
+        </details>
       </div>
     </section>
+  );
+}
+
+function ProjectTabs({
+  projectId,
+  activeTab,
+  onNavigate
+}: {
+  projectId: string;
+  activeTab: ProjectTabId;
+  onNavigate: (path: string) => void;
+}) {
+  return (
+    <nav className="project-tabs" aria-label="Project navigation">
+      {projectTabs.map((tab) => (
+        <a
+          aria-current={tab.id === activeTab ? "page" : undefined}
+          className={tab.id === activeTab ? "project-tab active" : "project-tab"}
+          href={buildProjectPath(projectId, tab.id)}
+          key={tab.id}
+          onClick={(event) => {
+            event.preventDefault();
+            onNavigate(buildProjectPath(projectId, tab.id));
+          }}
+        >
+          {tab.label}
+        </a>
+      ))}
+    </nav>
   );
 }
 
@@ -380,6 +543,26 @@ function AppShell() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
+  const [pathname, setPathname] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function navigate(path: string, options?: { replace?: boolean }) {
+    if (path === window.location.pathname) {
+      return;
+    }
+
+    if (options?.replace) {
+      window.history.replaceState(null, "", path);
+    } else {
+      window.history.pushState(null, "", path);
+    }
+    setPathname(window.location.pathname);
+  }
 
   useEffect(() => {
     if (!user) {
@@ -431,7 +614,12 @@ function AppShell() {
     setProjectError("");
   }
 
-  const selectedProject = projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
+  const projectRoute = parseProjectRoute(pathname);
+  const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
+  const routeProject = routeProjectId ? projectState.projects.find((project) => project.id === routeProjectId) : undefined;
+  const selectedProject = routeProject ?? projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
+  const activeProjectTab = projectRoute.type === "workspace" ? projectRoute.tab ?? defaultProjectTab : defaultProjectTab;
+  const routeIsValidProjectWorkspace = projectRoute.type === "workspace" && Boolean(routeProject);
   const projectPhases = useMemo(
     () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id),
     [projectState.phases, selectedProject?.id]
@@ -448,9 +636,7 @@ function AppShell() {
   const clientPreview = role === "client";
   const editable = permissions.canEditTasks && !clientPreview;
   const manageable = permissions.canManageProjects && !clientPreview;
-  const currentPath = window.location.pathname;
-  const routeNeedsProjectData = !["/projects/import", "/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
-  const routeUsesProjectHeader = !["/projects/import", "/billing", "/system-tests", "/admin", "/test", "/payment-success", "/payment-cancel"].includes(currentPath);
+  const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
   const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
   const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
 
@@ -459,6 +645,30 @@ function AppShell() {
       saveSelectedProjectId(selectedProjectId);
     }
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (projectLoading || projectState.projects.length === 0) {
+      return;
+    }
+
+    if (routeProject && routeProject.id !== selectedProjectId) {
+      setSelectedProjectId(routeProject.id);
+      saveSelectedProjectId(routeProject.id);
+    }
+
+    if (projectRoute.type === "workspace" && routeProject && !pathname.endsWith(`/${projectRoute.tab ?? defaultProjectTab}`)) {
+      navigate(buildProjectPath(routeProject.id, projectRoute.tab ?? defaultProjectTab), { replace: true });
+    }
+
+    if (pathname in legacyProjectRouteMap && selectedProject?.id) {
+      navigate(buildProjectPath(selectedProject.id, legacyProjectRouteMap[pathname]), { replace: true });
+    }
+  }, [pathname, projectLoading, projectRoute, projectState.projects.length, routeProject, selectedProject?.id, selectedProjectId]);
+
+  useEffect(() => {
+    setSelectedTaskId(undefined);
+    setShowNewTaskForm(false);
+  }, [routeIsValidProjectWorkspace ? selectedProject?.id : "no-project-workspace"]);
 
   useEffect(() => {
     if (!adminPreviewAvailable && adminPreviewRole !== "off") {
@@ -621,12 +831,14 @@ function AppShell() {
     syncProjectState(state);
     setSelectedProjectId(projectId);
     saveSelectedProjectId(projectId);
+    navigate(buildProjectPath(projectId, "plan"));
     setProjectNotice("Project import completed.");
   }
 
   const pageProps: ProjectPageProps = {
     projectState,
     selectedProjectId: selectedProject?.id ?? selectedProjectId,
+    activeProjectTab,
     role,
     userProfile,
     canEdit: editable,
@@ -647,7 +859,16 @@ function AppShell() {
     onUpdateRisk: updateRisk,
     onResetProjectState: resetProjectState,
     onSeedProjectState: seedProjectState,
-    onProjectImported: reloadAfterProjectImport
+    onProjectImported: reloadAfterProjectImport,
+    onNavigate: navigate,
+    onProjectChange: (projectId: string) => {
+      setSelectedProjectId(projectId);
+      saveSelectedProjectId(projectId);
+      setSelectedTaskId(undefined);
+      setShowNewTaskForm(false);
+      navigate(buildProjectPath(projectId, activeProjectTab));
+    },
+    onNewTask: () => setShowNewTaskForm(true)
   };
 
   if (authLoading) {
@@ -668,7 +889,7 @@ function AppShell() {
   if (projectLoading) {
     return (
       <div className="app-shell">
-        <Sidebar />
+        <Sidebar pathname={pathname} onNavigate={navigate} />
         <div className="main-shell">
           <TopHeader
             user={user}
@@ -699,7 +920,7 @@ function AppShell() {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar pathname={pathname} onNavigate={navigate} />
       <div className="main-shell">
         <TopHeader
           user={user}
@@ -741,17 +962,30 @@ function AppShell() {
                 Seed Demo Data
               </button>
             </section>
-          ) : projectState.projects.length === 0 || !routeUsesProjectHeader ? (
-            getRoute(pageProps)
+          ) : projectState.projects.length === 0 || !routeIsValidProjectWorkspace ? (
+            <>
+              <GlobalSearchResults
+                query={searchQuery}
+                tasks={selectedProject ? projectTasks : []}
+                documents={selectedProject ? projectState.documents.filter((document) => document.projectId === selectedProject.id) : []}
+                users={projectState.users}
+                onOpenTask={setSelectedTaskId}
+              />
+              {getRoute(pageProps, pathname)}
+            </>
           ) : (
             <>
-              <ProjectHeader
+              <ProjectContextBar
                 projectState={projectState}
                 selectedProjectId={selectedProject?.id ?? selectedProjectId}
-                onProjectChange={setSelectedProjectId}
-                canEdit={permissions.canCreateTasks}
+                onProjectChange={pageProps.onProjectChange}
+                activeTab={activeProjectTab}
+                canCreateTasks={permissions.canCreateTasks}
+                canManage={manageable}
                 onNewTask={() => setShowNewTaskForm(true)}
+                onNavigate={navigate}
               />
+              <ProjectTabs projectId={selectedProject.id} activeTab={activeProjectTab} onNavigate={navigate} />
               <GlobalSearchResults
                 query={searchQuery}
                 tasks={projectTasks}
@@ -768,7 +1002,7 @@ function AppShell() {
                   onCancel={() => setShowNewTaskForm(false)}
                 />
               ) : null}
-              {getRoute(pageProps)}
+              {getRoute(pageProps, pathname)}
             </>
           )}
         </main>
