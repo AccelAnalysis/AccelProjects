@@ -48,6 +48,7 @@ import {
   addTaskCommentInFirestore,
   createRiskInFirestore,
   createTaskInFirestore,
+  getFirestorePermissionMessage,
   loadProjectStateFromFirestore,
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
@@ -212,10 +213,6 @@ function Sidebar() {
           );
         })}
       </nav>
-      <div className="sidebar-footer">
-        <span>Firebase Mode</span>
-        <strong>Project edits persist through Firestore. Preview role and client-safe preferences stay in this browser.</strong>
-      </div>
     </aside>
   );
 }
@@ -348,6 +345,7 @@ function AppShell() {
   const [projectState, setProjectState] = useState<ProjectState>(emptyProjectState);
   const [projectLoading, setProjectLoading] = useState(true);
   const [projectError, setProjectError] = useState("");
+  const [projectNotice, setProjectNotice] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState(loadSelectedProjectId);
   const [role, setRole] = useState<UserRole>(loadSelectedRole);
   const [clientPreview, setClientPreview] = useState(loadClientPreview);
@@ -377,7 +375,7 @@ function AppShell() {
         setProjectError("");
       } catch (error) {
         if (active) {
-          setProjectError(error instanceof Error ? error.message : "Unable to load project data from Firestore");
+          setProjectError(getFirestorePermissionMessage(error));
         }
       } finally {
         if (active) {
@@ -436,8 +434,9 @@ function AppShell() {
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
+      setProjectNotice("Task updated.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to update task");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -449,8 +448,9 @@ function AppShell() {
       }
       setSelectedTaskId(newTask.id);
       setShowNewTaskForm(false);
+      setProjectNotice("Task created.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to create task");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -471,8 +471,9 @@ function AppShell() {
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
+      setProjectNotice("Comment added.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to add task comment");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -490,8 +491,9 @@ function AppShell() {
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
+      setProjectNotice("Risk created.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to create risk");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -501,8 +503,9 @@ function AppShell() {
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
+      setProjectNotice("Risk updated.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to update risk");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -517,8 +520,9 @@ function AppShell() {
 
       setSelectedTaskId(undefined);
       setShowNewTaskForm(false);
+      setProjectNotice("Demo data reset.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to reset project state");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -529,8 +533,9 @@ function AppShell() {
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
       }
+      setProjectNotice("Demo data seeded.");
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Unable to seed Firestore project data");
+      setProjectError(getFirestorePermissionMessage(error));
     }
   }
 
@@ -614,22 +619,27 @@ function AppShell() {
             <section className="panel">
               <div className="panel-header">
                 <div>
-                  <h2>Firestore Project Data Error</h2>
+                  <h2>Project Data Error</h2>
                   <p>{projectError}</p>
                 </div>
               </div>
+            </section>
+          ) : null}
+          {projectNotice ? (
+            <section className="panel notice-panel">
+              <p>{projectNotice}</p>
             </section>
           ) : null}
           {projectState.projects.length === 0 && routeNeedsProjectData ? (
             <section className="panel empty-state">
               <div className="panel-header">
                 <div>
-                  <h1>No Firestore project data yet</h1>
-                  <p>Seed the AccelProjects demo dataset to create the organization, clients, projects, tasks, comments, risks, documents, metrics, and activity records.</p>
+                  <h1>No project data found.</h1>
+                  <p>Seed demo project data to start testing AccelProjects.</p>
                 </div>
               </div>
               <button className="action-button" type="button" onClick={() => void seedProjectState()}>
-                Seed Firestore Demo Data
+                Seed Demo Data
               </button>
             </section>
           ) : projectState.projects.length === 0 ? (

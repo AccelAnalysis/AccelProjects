@@ -282,8 +282,8 @@ export function SettingsPage({ role, onResetProjectState, onSeedProjectState }: 
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h2>Firestore Demo Data</h2>
-            <p>Seed or reset the Firestore project-management demo dataset. Preview role and client-safe mode remain browser-only prototype controls.</p>
+            <h2>Demo Data</h2>
+            <p>Seed or reset the project-management demo dataset.</p>
           </div>
           <div className="button-row">
             <button
@@ -291,14 +291,14 @@ export function SettingsPage({ role, onResetProjectState, onSeedProjectState }: 
               type="button"
               onClick={onSeedProjectState}
             >
-              Seed Firestore Demo Data
+              Seed Demo Data
             </button>
             <button
               className="secondary-button danger-button"
               type="button"
               onClick={onResetProjectState}
             >
-              Reset Firestore Demo Data
+              Reset Demo Data
             </button>
           </div>
         </div>

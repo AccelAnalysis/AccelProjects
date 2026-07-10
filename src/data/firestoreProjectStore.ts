@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   query,
   setDoc,
@@ -59,20 +60,100 @@ function requireDb() {
   return db;
 }
 
+function requirePathSegment(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Missing Firestore path segment: ${label}`);
+  }
+
+  return value;
+}
+
+function requireRecordId(record: { id?: string }, label: string): string {
+  return requirePathSegment(record.id, `${label}.id`);
+}
+
+function validatePathSegments(pathSegments: unknown[]) {
+  return pathSegments.map((segment, index) => requirePathSegment(segment, `path[${index}]`));
+}
+
 function organizationPath() {
-  return ["organizations", FIRESTORE_ORGANIZATION_ID];
+  return [
+    requirePathSegment("organizations", "organizations collection"),
+    requirePathSegment(FIRESTORE_ORGANIZATION_ID, "organizationId")
+  ];
 }
 
 function projectPath(projectId: string) {
-  return [...organizationPath(), "projects", projectId];
+  return [
+    ...organizationPath(),
+    requirePathSegment("projects", "projects collection"),
+    requirePathSegment(projectId, "projectId")
+  ];
 }
 
 function createId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
+function requireCurrentUser() {
+  if (!auth?.currentUser) {
+    throw new Error("You must be signed in to use Firestore project data.");
+  }
+
+  return auth.currentUser;
+}
+
+function getDisplayName(user: FirebaseUser) {
+  return user.displayName || user.email?.split("@")[0] || "AccelProjects User";
+}
+
+function getInitials(name: string, email: string) {
+  const source = name || email || "AP";
+  return source
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "AP";
+}
+
+export function getFirestorePermissionMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    message.toLowerCase().includes("permission")
+    || message.toLowerCase().includes("missing or insufficient permissions")
+  ) {
+    return "Firestore permissions blocked this action. Confirm Firestore rules have been deployed for accelprojects.";
+  }
+
+  return error instanceof Error ? error.message : "Unable to complete the Firestore action.";
+}
+
+export async function ensureFirestoreUserProfile(user: FirebaseUser) {
+  const database = requireDb();
+  const now = new Date().toISOString();
+  const userId = requirePathSegment(user.uid, "auth.uid");
+  const userRef = doc(database, ...organizationPath(), rootCollectionMap.users, userId);
+  const existingUser = await getDoc(userRef);
+  const name = getDisplayName(user);
+  const email = user.email ?? "";
+
+  await setDoc(doc(database, ...organizationPath()), mockOrganization, { merge: true });
+  await setDoc(userRef, {
+    id: userId,
+    organizationId: FIRESTORE_ORGANIZATION_ID,
+    name,
+    email,
+    role: existingUser.exists() ? (existingUser.data().role ?? "project_manager") : "project_manager",
+    avatarInitials: getInitials(name, email),
+    createdAt: existingUser.exists() ? (existingUser.data().createdAt ?? now) : now,
+    updatedAt: now
+  } satisfies User, { merge: true });
+}
+
 async function readCollection<T extends { id: string }>(pathSegments: string[]) {
-  const snapshot = await getDocs(query(collection(requireDb(), ...pathSegments)));
+  const snapshot = await getDocs(query(collection(requireDb(), ...validatePathSegments(pathSegments))));
   return snapshot.docs.map((item) => item.data() as T);
 }
 
@@ -88,15 +169,17 @@ async function readProjectCollections<T extends { id: string }>(
 }
 
 async function writeDocument(pathSegments: string[], value: { id: string }) {
-  await setDoc(doc(requireDb(), ...pathSegments, value.id), value);
+  await setDoc(doc(requireDb(), ...validatePathSegments(pathSegments), requireRecordId(value, "document")), value);
 }
 
 async function deleteCollection(pathSegments: string[]) {
-  const snapshot = await getDocs(collection(requireDb(), ...pathSegments));
+  const snapshot = await getDocs(collection(requireDb(), ...validatePathSegments(pathSegments)));
   await Promise.all(snapshot.docs.map((item) => deleteDoc(item.ref)));
 }
 
 export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promise<ProjectState> {
+  await ensureFirestoreUserProfile(_user);
+
   const users = await readCollection<User>([...organizationPath(), rootCollectionMap.users]);
   const clients = await readCollection<Client>([...organizationPath(), rootCollectionMap.clients]);
   const projects = await readCollection<Project>([...organizationPath(), rootCollectionMap.projects]);
@@ -150,24 +233,56 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser): Promis
 }
 
 export async function seedProjectStateToFirestore(initialState: ProjectState = initialProjectState) {
+  const currentUser = requireCurrentUser();
+  await ensureFirestoreUserProfile(currentUser);
+
   const database = requireDb();
   const batch = writeBatch(database);
 
   batch.set(doc(database, ...organizationPath()), mockOrganization);
 
   initialState.users.forEach((user) => {
-    batch.set(doc(database, ...organizationPath(), rootCollectionMap.users, user.id), user);
+    batch.set(doc(database, ...organizationPath(), rootCollectionMap.users, requireRecordId(user, "user")), user);
   });
   initialState.clients.forEach((client) => {
-    batch.set(doc(database, ...organizationPath(), rootCollectionMap.clients, client.id), client);
+    batch.set(doc(database, ...organizationPath(), rootCollectionMap.clients, requireRecordId(client, "client")), client);
   });
   initialState.projects.forEach((project) => {
-    batch.set(doc(database, ...organizationPath(), rootCollectionMap.projects, project.id), project);
+    batch.set(doc(database, ...organizationPath(), rootCollectionMap.projects, requireRecordId(project, "project")), project);
   });
 
   const writeProjectScoped = <T extends { id: string; projectId: string }>(items: T[], key: ProjectScopedCollectionKey) => {
     items.forEach((item) => {
-      batch.set(doc(database, ...projectPath(item.projectId), projectCollectionMap[key], item.id), item);
+      batch.set(
+        doc(
+          database,
+          ...projectPath(requirePathSegment(item.projectId, `${key}.projectId`)),
+          requirePathSegment(projectCollectionMap[key], `${key} collection`),
+          requireRecordId(item, key)
+        ),
+        item
+      );
+    });
+  };
+
+  const writeTaskDependencies = (dependencies: TaskDependency[]) => {
+    dependencies.forEach((dependency) => {
+      const taskId = requirePathSegment(dependency.taskId, "taskDependencies.taskId");
+      const task = initialState.tasks.find((item) => item.id === taskId);
+
+      if (!task) {
+        throw new Error(`Missing task for task dependency: ${requireRecordId(dependency, "taskDependency")}`);
+      }
+
+      batch.set(
+        doc(
+          database,
+          ...projectPath(requirePathSegment(task.projectId, "taskDependencies.task.projectId")),
+          projectCollectionMap.taskDependencies,
+          requireRecordId(dependency, "taskDependency")
+        ),
+        dependency
+      );
     });
   };
 
@@ -175,21 +290,35 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
   writeProjectScoped(initialState.phases, "phases");
   writeProjectScoped(initialState.milestones, "milestones");
   writeProjectScoped(initialState.tasks, "tasks");
-  writeProjectScoped(initialState.taskDependencies, "taskDependencies");
+  writeTaskDependencies(initialState.taskDependencies);
   writeProjectScoped(initialState.risks, "risks");
   writeProjectScoped(initialState.documents, "documents");
   writeProjectScoped(initialState.metrics, "metrics");
   writeProjectScoped(initialState.activityEvents, "activityEvents");
 
   initialState.taskComments.forEach((comment) => {
-    const task = initialState.tasks.find((item) => item.id === comment.taskId);
+    const taskId = requirePathSegment(comment.taskId, "taskComments.taskId");
+    const task = initialState.tasks.find((item) => item.id === taskId);
 
-    if (task) {
-      batch.set(doc(database, ...projectPath(task.projectId), projectCollectionMap.tasks, task.id, "comments", comment.id), comment);
+    if (!task) {
+      throw new Error(`Missing task for task comment: ${requireRecordId(comment, "taskComment")}`);
     }
+
+    batch.set(
+      doc(
+        database,
+        ...projectPath(requirePathSegment(task.projectId, "taskComments.task.projectId")),
+        projectCollectionMap.tasks,
+        requireRecordId(task, "task"),
+        "comments",
+        requireRecordId(comment, "taskComment")
+      ),
+      comment
+    );
   });
 
   await batch.commit();
+  await ensureFirestoreUserProfile(currentUser);
 }
 
 export async function createTaskInFirestore(task: Omit<Task, "id" | "completedAt">) {
@@ -199,37 +328,39 @@ export async function createTaskInFirestore(task: Omit<Task, "id" | "completedAt
     completedAt: task.status === "done" ? new Date().toISOString() : null
   };
 
-  await writeDocument([...projectPath(newTask.projectId), projectCollectionMap.tasks], newTask);
+  await writeDocument([...projectPath(requirePathSegment(newTask.projectId, "task.projectId")), projectCollectionMap.tasks], newTask);
   return newTask;
 }
 
 export async function updateTaskInFirestore(taskId: string, updates: Partial<Task>) {
+  const safeTaskId = requirePathSegment(taskId, "taskId");
   const state = await loadProjectStateForCurrentUser();
-  const task = state.tasks.find((item) => item.id === taskId);
+  const task = state.tasks.find((item) => item.id === safeTaskId);
 
   if (!task) {
-    throw new Error(`Task ${taskId} was not found in Firestore.`);
+    throw new Error(`Task ${safeTaskId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, taskId), updates);
+  await updateDoc(doc(requireDb(), ...projectPath(task.projectId), projectCollectionMap.tasks, safeTaskId), updates);
 }
 
 export async function addTaskCommentInFirestore(taskId: string, comment: Omit<TaskComment, "id" | "taskId" | "createdAt">) {
+  const safeTaskId = requirePathSegment(taskId, "taskId");
   const state = await loadProjectStateForCurrentUser();
-  const task = state.tasks.find((item) => item.id === taskId);
+  const task = state.tasks.find((item) => item.id === safeTaskId);
 
   if (!task) {
-    throw new Error(`Task ${taskId} was not found in Firestore.`);
+    throw new Error(`Task ${safeTaskId} was not found in Firestore.`);
   }
 
   const newComment: TaskComment = {
     ...comment,
     id: createId("comment"),
-    taskId,
+    taskId: safeTaskId,
     createdAt: new Date().toISOString()
   };
 
-  await writeDocument([...projectPath(task.projectId), projectCollectionMap.tasks, taskId, "comments"], newComment);
+  await writeDocument([...projectPath(task.projectId), projectCollectionMap.tasks, safeTaskId, "comments"], newComment);
   return newComment;
 }
 
@@ -239,45 +370,49 @@ export async function createRiskInFirestore(risk: Omit<ProjectRisk, "id">) {
     id: createId("risk")
   };
 
-  await writeDocument([...projectPath(newRisk.projectId), projectCollectionMap.risks], newRisk);
+  await writeDocument([...projectPath(requirePathSegment(newRisk.projectId, "risk.projectId")), projectCollectionMap.risks], newRisk);
   return newRisk;
 }
 
 export async function updateRiskInFirestore(riskId: string, updates: Partial<ProjectRisk>) {
+  const safeRiskId = requirePathSegment(riskId, "riskId");
   const state = await loadProjectStateForCurrentUser();
-  const risk = state.risks.find((item) => item.id === riskId);
+  const risk = state.risks.find((item) => item.id === safeRiskId);
 
   if (!risk) {
-    throw new Error(`Risk ${riskId} was not found in Firestore.`);
+    throw new Error(`Risk ${safeRiskId} was not found in Firestore.`);
   }
 
-  await updateDoc(doc(requireDb(), ...projectPath(risk.projectId), projectCollectionMap.risks, riskId), updates);
+  await updateDoc(doc(requireDb(), ...projectPath(risk.projectId), projectCollectionMap.risks, safeRiskId), updates);
 }
 
 export async function resetFirestoreProjectState() {
-  const currentState = await loadProjectStateForCurrentUser();
+  const currentUser = requireCurrentUser();
+  await ensureFirestoreUserProfile(currentUser);
+  const currentState = await loadProjectStateFromFirestore(currentUser);
 
   await Promise.all(currentState.projects.map(async (project) => {
     await Promise.all(currentState.tasks
       .filter((task) => task.projectId === project.id)
-      .map((task) => deleteCollection([...projectPath(project.id), projectCollectionMap.tasks, task.id, "comments"])));
+      .map((task) => deleteCollection([...projectPath(project.id), projectCollectionMap.tasks, requireRecordId(task, "task"), "comments"])));
 
     await Promise.all(Object.values(projectCollectionMap).map((collectionName) => (
       deleteCollection([...projectPath(project.id), collectionName])
     )));
   }));
 
-  await Promise.all(Object.values(rootCollectionMap).map((collectionName) => (
-    deleteCollection([...organizationPath(), collectionName])
-  )));
+  await Promise.all([
+    deleteCollection([...organizationPath(), rootCollectionMap.clients]),
+    deleteCollection([...organizationPath(), rootCollectionMap.projects]),
+    Promise.all(initialProjectState.users
+      .filter((user) => user.id !== currentUser.uid)
+      .map((user) => deleteDoc(doc(requireDb(), ...organizationPath(), rootCollectionMap.users, requireRecordId(user, "user")))))
+  ]);
 
-  await deleteDoc(doc(requireDb(), ...organizationPath()));
+  await setDoc(doc(requireDb(), ...organizationPath()), mockOrganization, { merge: true });
+  await ensureFirestoreUserProfile(currentUser);
 }
 
 export async function loadProjectStateForCurrentUser() {
-  if (!auth?.currentUser) {
-    throw new Error("You must be signed in to use Firestore project data.");
-  }
-
-  return loadProjectStateFromFirestore(auth.currentUser);
+  return loadProjectStateFromFirestore(requireCurrentUser());
 }

@@ -13,6 +13,8 @@ import {
   addTaskCommentInFirestore,
   createRiskInFirestore,
   createTaskInFirestore,
+  ensureFirestoreUserProfile,
+  getFirestorePermissionMessage,
   loadProjectStateFromFirestore,
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
@@ -44,7 +46,7 @@ export function SystemTestsPage() {
     try {
       await action();
     } catch (error) {
-      setFirebaseResultMessage(error instanceof Error ? error.message : "Firebase test failed");
+      setFirebaseResultMessage(getFirestorePermissionMessage(error));
     }
   }
 
@@ -212,6 +214,16 @@ export function SystemTestsPage() {
             );
           })}>
             Auth Status
+          </button>
+          <button type="button" onClick={() => runFirebaseTest(async () => {
+            if (!user) {
+              throw new Error("Sign in before bootstrapping a Firestore profile.");
+            }
+
+            await ensureFirestoreUserProfile(user);
+            setFirebaseResultMessage(`User profile ready at organizations/org_accel_projects/users/${user.uid}`);
+          })}>
+            Bootstrap User Profile
           </button>
           <button type="button" onClick={() => runFirebaseTest(async () => {
             await loadFirestoreProjectState();

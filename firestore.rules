@@ -2,11 +2,92 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /organizations/org_accel_projects/{document=**} {
-      allow read, write: if request.auth != null;
-      // TODO: Restrict reads and writes by organization membership records.
-      // TODO: Enforce project role permissions for tasks, risks, documents, and settings.
-      // TODO: Separate client-safe access from internal project operations data.
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAccelOrg(organizationId) {
+      return organizationId == "org_accel_projects";
+    }
+
+    function isOrgMember(organizationId) {
+      return isSignedIn()
+        && isAccelOrg(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/users/$(request.auth.uid));
+    }
+
+    function isOwnBootstrapProfile(organizationId, userId) {
+      return isSignedIn()
+        && isAccelOrg(organizationId)
+        && userId == request.auth.uid
+        && request.resource.data.id == request.auth.uid
+        && request.resource.data.organizationId == organizationId
+        && request.resource.data.email is string
+        && request.resource.data.name is string
+        && request.resource.data.role in ["admin", "project_manager", "contributor", "client", "viewer"]
+        && request.resource.data.avatarInitials is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.updatedAt is string;
+    }
+
+    match /organizations/{organizationId} {
+      allow create, read, update: if isSignedIn() && isAccelOrg(organizationId);
+      allow delete: if false;
+
+      match /users/{userId} {
+        allow create: if isOwnBootstrapProfile(organizationId, userId) || isOrgMember(organizationId);
+        allow get: if (isSignedIn() && isAccelOrg(organizationId) && userId == request.auth.uid) || isOrgMember(organizationId);
+        allow list: if isOrgMember(organizationId);
+        allow update, delete: if isOrgMember(organizationId);
+      }
+
+      match /clients/{clientId} {
+        allow read, write: if isOrgMember(organizationId);
+      }
+
+      match /projects/{projectId} {
+        allow read, write: if isOrgMember(organizationId);
+
+        match /members/{memberId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /phases/{phaseId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /tasks/{taskId} {
+          allow read, write: if isOrgMember(organizationId);
+
+          match /comments/{commentId} {
+            allow read, write: if isOrgMember(organizationId);
+          }
+        }
+
+        match /taskDependencies/{dependencyId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /risks/{riskId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /documents/{documentId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /metrics/{metricId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /milestones/{milestoneId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+
+        match /activityEvents/{eventId} {
+          allow read, write: if isOrgMember(organizationId);
+        }
+      }
     }
 
     match /{document=**} {
