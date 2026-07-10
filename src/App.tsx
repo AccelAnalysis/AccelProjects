@@ -90,6 +90,7 @@ import {
   saveAdminPreviewRole,
   saveSelectedProjectId
 } from "./data/projectStore";
+import { validateDependencies } from "./scheduling/dependencyGraph";
 import type { Milestone, ProjectActivityEvent, ProjectRisk, ProjectState, Task, TaskDependency, User, UserRole } from "./types";
 import { formatDateOnly } from "./utils/dateOnly";
 import accelLogo from "../Accel_GOH_Logo.png";
@@ -163,6 +164,13 @@ const emptyProjectState: ProjectState = {
   metrics: [],
   activityEvents: []
 };
+
+function getFatalDependencyValidationMessage(tasks: Task[], dependencies: TaskDependency[]) {
+  return validateDependencies(tasks, dependencies)
+    .filter((issue) => issue.severity === "fatal")
+    .map((issue) => issue.message)
+    .join(" ");
+}
 
 function getRoute(props: ProjectPageProps, pathname: string) {
   const path = pathname;
@@ -473,22 +481,18 @@ function ProjectContextBar({
 
   return (
     <section className="project-context-bar">
-      <div>
-        <p className="eyebrow">{client?.name ?? "Client"}</p>
+      <div className="project-context-main">
+        <p className="project-breadcrumb">{client?.name ?? "Client"} / <span title={project.name}>{project.name}</span></p>
         <div className="project-title-row">
           <h1>{project.name}</h1>
           <span className={`status-badge ${healthTone}`}>
-            Health: {healthLabel}
+            {healthLabel}
           </span>
         </div>
-        <p>{owner?.name ?? "Project owner"} owns delivery. {completeTasks}/{tasks.length} tasks complete.</p>
+        <p>{progress}% complete · Target {formatDateOnly(project.targetDate)} · Owner {owner?.name ?? "unassigned"}</p>
         <div className="progress-track">
           <span style={{ width: `${progress}%` }} />
         </div>
-      </div>
-      <div className="project-context-meta">
-        <span><strong>{progress}%</strong> task progress</span>
-        <span><strong>{formatDateOnly(project.targetDate)}</strong> target</span>
       </div>
       <div className="project-header-actions">
         <ProjectSelector
@@ -500,12 +504,12 @@ function ProjectContextBar({
         {canCreateTasks ? (
           <button className="action-button" type="button" onClick={onNewTask}>
             <Plus size={18} aria-hidden="true" />
-            New Task
+            New
           </button>
         ) : null}
         {canManage ? (
           <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectImportPath(project.id))}>
-            Import
+            Update via File
           </button>
         ) : null}
         <details className="project-actions-menu">
@@ -515,7 +519,8 @@ function ProjectContextBar({
           <div className="project-actions-popover">
             <button type="button" onClick={() => onNavigate(buildProjectPath(project.id, "settings"))}>Project Settings</button>
             <button type="button" onClick={() => onNavigate("/projects")}>Return to Projects</button>
-            <button type="button" disabled title="Export is planned for a later phase.">Export Project (later)</button>
+            <button type="button" disabled title="Export is planned for Phase 3A.">Export Project</button>
+            <button type="button" disabled title="Version history is planned for Phase 3A.">Version History</button>
           </div>
         </details>
       </div>
@@ -881,6 +886,14 @@ function AppShell() {
     }
 
     try {
+      const proposedDependency: TaskDependency = { id: "pending_dependency", ...dependency };
+      const validationMessage = getFatalDependencyValidationMessage(projectState.tasks, [...projectState.taskDependencies, proposedDependency]);
+
+      if (validationMessage) {
+        setProjectError(validationMessage);
+        return null;
+      }
+
       const created = await createTaskDependencyInFirestore(dependency);
       const task = projectState.tasks.find((item) => item.id === dependency.taskId);
       const event = task ? await logScheduleActivity(task.projectId, "Created task dependency.", { dependencyId: created.id }) : null;
@@ -904,9 +917,24 @@ function AppShell() {
     }
 
     const dependency = projectState.taskDependencies.find((item) => item.id === dependencyId);
-    const task = dependency ? projectState.tasks.find((item) => item.id === dependency.taskId) : undefined;
+
+    if (!dependency) {
+      setProjectError("Dependency no longer exists.");
+      throw new Error("Dependency not found.");
+    }
+
+    const updatedDependency = { ...dependency, ...updates };
+    const task = projectState.tasks.find((item) => item.id === updatedDependency.taskId);
 
     try {
+      const nextDependencies = projectState.taskDependencies.map((item) => item.id === dependencyId ? updatedDependency : item);
+      const validationMessage = getFatalDependencyValidationMessage(projectState.tasks, nextDependencies);
+
+      if (validationMessage) {
+        setProjectError(validationMessage);
+        throw new Error(validationMessage);
+      }
+
       await updateTaskDependencyInFirestore(dependencyId, updates);
       const event = task ? await logScheduleActivity(task.projectId, "Updated task dependency.", { dependencyId, updates }) : null;
       setProjectState((current) => ({

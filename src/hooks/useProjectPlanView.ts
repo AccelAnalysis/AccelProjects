@@ -26,6 +26,9 @@ export type ProjectPlanViewState = {
   grouping: PlanGrouping;
   colorMode: PlanColorMode;
   zoomMode: TimelineZoomMode;
+  showDependencies: boolean;
+  showMilestones: boolean;
+  showCompletedTasks: boolean;
   collapsedIds: string[];
   hierarchyWidth: number;
 };
@@ -51,8 +54,11 @@ export const defaultPlanViewState: ProjectPlanViewState = {
   grouping: "phase",
   colorMode: "status",
   zoomMode: "week",
+  showDependencies: false,
+  showMilestones: true,
+  showCompletedTasks: true,
   collapsedIds: [],
-  hierarchyWidth: 520
+  hierarchyWidth: 440
 };
 
 function storageKey(projectId: string) {

@@ -4,12 +4,14 @@ import {
   ChevronDown,
   ChevronRight,
   Diamond,
-  Link2,
+  Filter,
+  Plus,
   RotateCcw,
+  SlidersHorizontal,
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from "react";
 import type { Milestone, Phase, Project, Task, TaskDependency, User } from "../../../types";
 import { addDays, clampDateOnly, daysBetween, formatDateOnly, isDateOnly, todayDateOnly } from "../../../utils/dateOnly";
 import { calculateScheduleRange } from "../../../utils/scheduleRange";
@@ -121,10 +123,17 @@ export function PlanWorkspace({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [undoCommand, setUndoCommand] = useState<UndoCommand | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<"task" | "milestone" | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState({ name: "", date: project.startDate, status: "planned" as Milestone["status"] });
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [bulkShiftDays, setBulkShiftDays] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(900);
+  const filterButtonRef = useRef<HTMLButtonElement | null>(null);
+  const viewButtonRef = useRef<HTMLButtonElement | null>(null);
+  const newButtonRef = useRef<HTMLButtonElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const hierarchyResizeRef = useRef<{ startX: number; width: number } | null>(null);
@@ -132,7 +141,10 @@ export function PlanWorkspace({
   const scale = useMemo(() => createTimelineScale(viewState.zoomMode, range, viewportWidth), [range, viewState.zoomMode, viewportWidth]);
   const today = todayDateOnly();
   const todayVisible = today >= range.startDate && today <= range.endDate;
-  const filtered = useMemo(() => filterPlanData(tasks, milestones, phases, users, viewState.filters), [milestones, phases, tasks, users, viewState.filters]);
+  const filtered = useMemo(() => filterPlanData(tasks, milestones, phases, users, viewState.filters, {
+    showCompletedTasks: viewState.showCompletedTasks,
+    showMilestones: viewState.showMilestones
+  }), [milestones, phases, tasks, users, viewState.filters, viewState.showCompletedTasks, viewState.showMilestones]);
   const rowModel = useMemo(() => buildScheduleRows({
     phases,
     tasks: filtered.tasks,
@@ -147,7 +159,29 @@ export function PlanWorkspace({
   const visibleTasks = useMemo(() => rowModel.filter((row): row is Extract<ScheduleRow, { type: "task" }> => row.type === "task").map((row) => row.task), [rowModel]);
   const visibleTaskIds = useMemo(() => new Set(visibleTasks.map((task) => task.id)), [visibleTasks]);
   const visibleTaskIdKey = [...visibleTaskIds].sort().join("|");
-  const visibleDependencies = dependencies.filter((dependency) => visibleTaskIds.has(dependency.taskId) && visibleTaskIds.has(dependency.dependsOnTaskId));
+  const selectedDependencyTaskIds = useMemo(() => {
+    if (selectedTaskIds.size === 0) {
+      return null;
+    }
+
+    const related = new Set(selectedTaskIds);
+    dependencies.forEach((dependency) => {
+      if (selectedTaskIds.has(dependency.taskId)) {
+        related.add(dependency.dependsOnTaskId);
+      }
+      if (selectedTaskIds.has(dependency.dependsOnTaskId)) {
+        related.add(dependency.taskId);
+      }
+    });
+    return related;
+  }, [dependencies, selectedTaskIds]);
+  const visibleDependencies = viewState.showDependencies
+    ? dependencies.filter((dependency) => (
+      visibleTaskIds.has(dependency.taskId)
+      && visibleTaskIds.has(dependency.dependsOnTaskId)
+      && (!selectedDependencyTaskIds || (selectedDependencyTaskIds.has(dependency.taskId) && selectedDependencyTaskIds.has(dependency.dependsOnTaskId)))
+    ))
+    : [];
   const hiddenDependencyCount = dependencies.length - visibleDependencies.length;
   const conflicts = useMemo(() => detectScheduleConflicts({ project, phases, tasks, milestones, dependencies }), [dependencies, milestones, phases, project, tasks]);
 
@@ -156,11 +190,18 @@ export function PlanWorkspace({
     setDragState(null);
     setPendingChange(null);
     setUndoCommand(null);
+    setFilterOpen(false);
+    setViewOpen(false);
+    setNewMenuOpen(false);
+    setCreateMode(null);
   }, [project.id]);
 
   useEffect(() => {
-    setSelectedTaskIds((current) => new Set([...current].filter((taskId) => visibleTaskIds.has(taskId))));
-  }, [visibleTaskIdKey, visibleTaskIds]);
+    setSelectedTaskIds((current) => {
+      const nextIds = [...current].filter((taskId) => visibleTaskIds.has(taskId));
+      return nextIds.length === current.size ? current : new Set(nextIds);
+    });
+  }, [visibleTaskIdKey]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -341,6 +382,8 @@ export function PlanWorkspace({
       }
       setPendingChange(null);
       setNotice("Schedule change saved.");
+    } catch {
+      setNotice("Schedule change could not be saved.");
     } finally {
       setSaving(false);
     }
@@ -464,75 +507,94 @@ export function PlanWorkspace({
         grouping={viewState.grouping}
         colorMode={viewState.colorMode}
         zoomMode={viewState.zoomMode}
+        showDependencies={viewState.showDependencies}
+        showMilestones={viewState.showMilestones}
+        showCompletedTasks={viewState.showCompletedTasks}
         phases={phases}
         users={users}
         matchingCount={visibleTasks.length + filtered.milestones.length}
+        activeFilterCount={countActiveFilters(viewState.filters)}
+        filterOpen={filterOpen}
+        viewOpen={viewOpen}
+        newMenuOpen={newMenuOpen}
+        filterButtonRef={filterButtonRef}
+        viewButtonRef={viewButtonRef}
+        newButtonRef={newButtonRef}
         onFiltersChange={updateFilters}
         onClearFilter={clearFilter}
         onClearAll={() => setViewState((current) => ({ ...current, filters: defaultPlanFilters }))}
         onGroupingChange={(grouping) => setViewState((current) => ({ ...current, grouping }))}
         onColorModeChange={(colorMode) => setViewState((current) => ({ ...current, colorMode }))}
         onZoomChange={setZoom}
+        onToggleDependencies={(showDependencies) => setViewState((current) => ({ ...current, showDependencies }))}
+        onToggleMilestones={(showMilestones) => setViewState((current) => ({ ...current, showMilestones }))}
+        onToggleCompletedTasks={(showCompletedTasks) => setViewState((current) => ({ ...current, showCompletedTasks }))}
         onToday={scrollToday}
         onPrevious={() => scrollRef.current?.scrollBy({ left: -viewportWidth * 0.8, behavior: "smooth" })}
         onNext={() => scrollRef.current?.scrollBy({ left: viewportWidth * 0.8, behavior: "smooth" })}
         onExpandAll={() => setViewState((current) => ({ ...current, collapsedIds: [] }))}
         onCollapseAll={() => setViewState((current) => ({ ...current, collapsedIds: rowModel.filter((row) => row.type === "phase" || row.type === "group").map((row) => row.id) }))}
+        onFilterOpenChange={(open) => {
+          setFilterOpen(open);
+          if (!open) {
+            filterButtonRef.current?.focus();
+          }
+        }}
+        onViewOpenChange={(open) => {
+          setViewOpen(open);
+          if (!open) {
+            viewButtonRef.current?.focus();
+          }
+        }}
+        onNewMenuOpenChange={(open) => {
+          setNewMenuOpen(open);
+          if (!open) {
+            newButtonRef.current?.focus();
+          }
+        }}
+        onCreateTask={() => {
+          setNewMenuOpen(false);
+          setCreateMode("task");
+        }}
+        onCreateMilestone={() => {
+          setNewMenuOpen(false);
+          setCreateMode("milestone");
+        }}
+        canCreateTasks={canCreateTasks}
+        canManageSchedule={canManageSchedule}
       />
 
       {notice ? <div className="plan-status" role="status">{notice}<button className="link-button" type="button" onClick={() => setNotice("")}>Dismiss</button></div> : null}
       {undoCommand ? <button className="secondary-button undo-button" type="button" disabled={saving} onClick={() => void runUndo()}><RotateCcw size={16} aria-hidden="true" /> {undoCommand.label}</button> : null}
-      {hiddenDependencyCount > 0 ? <div className="plan-status">{hiddenDependencyCount} dependenc{hiddenDependencyCount === 1 ? "y is" : "ies are"} hidden by filters or collapsed rows.</div> : null}
+      {viewState.showDependencies && dependencies.length > 0 ? <div className="dependency-summary" aria-label={`${visibleDependencies.length} visible dependencies and ${hiddenDependencyCount} hidden dependencies`}>Dependencies: {visibleDependencies.length} visible · {hiddenDependencyCount} hidden</div> : null}
       {conflicts.length > 0 ? <ConflictSummary conflicts={conflicts} /> : null}
 
-      <BulkActionBar
-        selectedCount={selectedTaskIds.size}
-        users={users}
-        phases={phases}
-        bulkShiftDays={bulkShiftDays}
-        canManageSchedule={canManageSchedule}
-        onBulkShiftDaysChange={setBulkShiftDays}
-        onSelectAll={selectAllVisible}
-        onClear={() => setSelectedTaskIds(new Set())}
-        onShift={bulkShift}
-        onUnschedule={bulkUnschedule}
-        onSchedule={scheduleSelected}
-        onBatchField={(updates, message) => proposeBulk({
-          type: "bulk",
-          title: message,
-          updates: tasks.filter((task) => selectedTaskIds.has(task.id)).map((task) => ({ taskId: task.id, updates })),
-          undoUpdates: tasks.filter((task) => selectedTaskIds.has(task.id)).map((task) => ({
-            taskId: task.id,
-            updates: { assigneeId: task.assigneeId, status: task.status, priority: task.priority, phaseId: task.phaseId }
-          })),
-          conflicts: [],
-          message
-        })}
-      />
-
-      <div className="plan-create-row">
-        {canCreateTasks ? (
-          <InlineTaskCreator projectId={project.id} phases={phases} users={users} onCreateTask={onCreateTask} />
-        ) : null}
-        {canManageSchedule ? (
-          <form
-            className="inline-create-form plan-milestone-create"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void createMilestone();
-            }}
-          >
-            <input aria-label="Milestone name" placeholder="Milestone name" value={milestoneDraft.name} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, name: event.target.value })} />
-            <input aria-label="Milestone date" type="date" value={milestoneDraft.date} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, date: event.target.value })} />
-            <select aria-label="Milestone status" value={milestoneDraft.status} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, status: event.target.value as Milestone["status"] })}>
-              <option value="planned">Planned</option>
-              <option value="at_risk">At risk</option>
-              <option value="complete">Complete</option>
-            </select>
-            <button className="secondary-button" type="submit"><Diamond size={16} aria-hidden="true" /> Add Milestone</button>
-          </form>
-        ) : null}
-      </div>
+      {selectedTaskIds.size > 0 ? (
+        <BulkActionBar
+          selectedCount={selectedTaskIds.size}
+          users={users}
+          phases={phases}
+          bulkShiftDays={bulkShiftDays}
+          canManageSchedule={canManageSchedule}
+          onBulkShiftDaysChange={setBulkShiftDays}
+          onSelectAll={selectAllVisible}
+          onClear={() => setSelectedTaskIds(new Set())}
+          onShift={bulkShift}
+          onUnschedule={bulkUnschedule}
+          onSchedule={scheduleSelected}
+          onBatchField={(updates, message) => proposeBulk({
+            type: "bulk",
+            title: message,
+            updates: tasks.filter((task) => selectedTaskIds.has(task.id)).map((task) => ({ taskId: task.id, updates })),
+            undoUpdates: tasks.filter((task) => selectedTaskIds.has(task.id)).map((task) => ({
+              taskId: task.id,
+              updates: { assigneeId: task.assigneeId, status: task.status, priority: task.priority, phaseId: task.phaseId }
+            })),
+            conflicts: [],
+            message
+          })}
+        />
+      ) : null}
 
       <div
         ref={scrollRef}
@@ -542,6 +604,9 @@ export function PlanWorkspace({
         <div className="plan-grid" style={{ width: `${viewState.hierarchyWidth + scale.timelineWidth}px` }}>
           <div className="plan-hierarchy-header">
             <span>Work item</span>
+            <span>Owner</span>
+            <span>Dates</span>
+            <span>Status</span>
             <button
               aria-label="Resize hierarchy pane"
               className="hierarchy-resize-handle"
@@ -566,14 +631,10 @@ export function PlanWorkspace({
                 row={row}
                 users={users}
                 phases={phases}
-                allTasks={tasks}
-                canManageSchedule={canManageSchedule}
                 selectedTaskIds={selectedTaskIds}
                 onToggleCollapse={toggleCollapse}
                 onToggleTask={toggleTask}
                 onOpenTask={onOpenTask}
-                onProposeTaskChange={proposeTaskChange}
-                onCreateDependency={createDependency}
                 rowTop={index * rowHeight}
               />
             ))}
@@ -609,7 +670,6 @@ export function PlanWorkspace({
                     previewDueDate: task.dueDate
                   });
                 }}
-                onProposeMilestoneChange={proposeMilestoneChange}
               />
             ))}
           </div>
@@ -630,6 +690,7 @@ export function PlanWorkspace({
         tasks={tasks}
         canManageSchedule={canManageSchedule}
         onOpenTask={onOpenTask}
+        onCreateDependency={createDependency}
         onUpdateDependency={onUpdateDependency}
         onDeleteDependency={onDeleteDependency}
         onUndo={(dependency) => setUndoCommand({
@@ -637,6 +698,42 @@ export function PlanWorkspace({
           run: () => onCreateDependency({ taskId: dependency.taskId, dependsOnTaskId: dependency.dependsOnTaskId, type: dependency.type }).then(() => undefined)
         })}
       />
+
+      {createMode === "task" && canCreateTasks ? (
+        <CreateDrawer title="New task" onClose={() => {
+          setCreateMode(null);
+          newButtonRef.current?.focus();
+        }}>
+          <InlineTaskCreator projectId={project.id} phases={phases} users={users} onCreateTask={(task) => {
+            onCreateTask(task);
+            setCreateMode(null);
+          }} />
+        </CreateDrawer>
+      ) : null}
+
+      {createMode === "milestone" && canManageSchedule ? (
+        <CreateDrawer title="New milestone" onClose={() => {
+          setCreateMode(null);
+          newButtonRef.current?.focus();
+        }}>
+          <form
+            className="drawer-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createMilestone().then(() => setCreateMode(null));
+            }}
+          >
+            <input aria-label="Milestone name" placeholder="Milestone name" value={milestoneDraft.name} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, name: event.target.value })} />
+            <input aria-label="Milestone date" type="date" value={milestoneDraft.date} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, date: event.target.value })} />
+            <select aria-label="Milestone status" value={milestoneDraft.status} onChange={(event) => setMilestoneDraft({ ...milestoneDraft, status: event.target.value as Milestone["status"] })}>
+              <option value="planned">Planned</option>
+              <option value="at_risk">At risk</option>
+              <option value="complete">Complete</option>
+            </select>
+            <button className="action-button" type="submit"><Diamond size={16} aria-hidden="true" />Create Milestone</button>
+          </form>
+        </CreateDrawer>
+      ) : null}
 
       {selectedMilestone ? (
         <MilestoneDetailPanel
@@ -666,7 +763,14 @@ export function PlanWorkspace({
   );
 }
 
-function filterPlanData(tasks: Task[], milestones: Milestone[], phases: Phase[], users: User[], filters: PlanFilters) {
+function filterPlanData(
+  tasks: Task[],
+  milestones: Milestone[],
+  phases: Phase[],
+  users: User[],
+  filters: PlanFilters,
+  options: { showCompletedTasks: boolean; showMilestones: boolean }
+) {
   const today = todayDateOnly();
   const normalizedSearch = filters.search.trim().toLowerCase();
   const userById = new Map(users.map((user) => [user.id, user]));
@@ -689,13 +793,15 @@ function filterPlanData(tasks: Task[], milestones: Milestone[], phases: Phase[],
       && (!filters.waitingOnClientOnly || task.status === "waiting_on_client")
       && (!filters.unscheduledOnly || scheduleState === "unscheduled")
       && (!filters.scheduleErrorsOnly || scheduleState === "incomplete" || scheduleState === "invalid" || !phase)
+      && (options.showCompletedTasks || task.status !== "done")
       && matchesDateRange
       && !filters.milestonesOnly;
   });
 
   const filteredMilestones = milestones.filter((milestone) => {
     const matchesSearch = !normalizedSearch || milestone.name.toLowerCase().includes(normalizedSearch);
-    return matchesSearch
+    return options.showMilestones
+      && matchesSearch
       && (filters.dateStart ? milestone.date >= filters.dateStart : true)
       && (filters.dateEnd ? milestone.date <= filters.dateEnd : true)
       && (!filters.unscheduledOnly && !filters.scheduleErrorsOnly)
@@ -710,158 +816,325 @@ function PlanToolbar({
   grouping,
   colorMode,
   zoomMode,
+  showDependencies,
+  showMilestones,
+  showCompletedTasks,
   phases,
   users,
   matchingCount,
+  activeFilterCount,
+  filterOpen,
+  viewOpen,
+  newMenuOpen,
+  filterButtonRef,
+  viewButtonRef,
+  newButtonRef,
   onFiltersChange,
   onClearFilter,
   onClearAll,
   onGroupingChange,
   onColorModeChange,
   onZoomChange,
+  onToggleDependencies,
+  onToggleMilestones,
+  onToggleCompletedTasks,
   onToday,
   onPrevious,
   onNext,
   onExpandAll,
-  onCollapseAll
+  onCollapseAll,
+  onFilterOpenChange,
+  onViewOpenChange,
+  onNewMenuOpenChange,
+  onCreateTask,
+  onCreateMilestone,
+  canCreateTasks,
+  canManageSchedule
 }: {
   filters: PlanFilters;
   grouping: PlanGrouping;
   colorMode: PlanColorMode;
   zoomMode: TimelineZoomMode;
+  showDependencies: boolean;
+  showMilestones: boolean;
+  showCompletedTasks: boolean;
   phases: Phase[];
   users: User[];
   matchingCount: number;
+  activeFilterCount: number;
+  filterOpen: boolean;
+  viewOpen: boolean;
+  newMenuOpen: boolean;
+  filterButtonRef: RefObject<HTMLButtonElement | null>;
+  viewButtonRef: RefObject<HTMLButtonElement | null>;
+  newButtonRef: RefObject<HTMLButtonElement | null>;
   onFiltersChange: (filters: Partial<PlanFilters>) => void;
   onClearFilter: (key: keyof PlanFilters) => void;
   onClearAll: () => void;
   onGroupingChange: (grouping: PlanGrouping) => void;
   onColorModeChange: (colorMode: PlanColorMode) => void;
   onZoomChange: (mode: TimelineZoomMode) => void;
+  onToggleDependencies: (showDependencies: boolean) => void;
+  onToggleMilestones: (showMilestones: boolean) => void;
+  onToggleCompletedTasks: (showCompletedTasks: boolean) => void;
   onToday: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
+  onFilterOpenChange: (open: boolean) => void;
+  onViewOpenChange: (open: boolean) => void;
+  onNewMenuOpenChange: (open: boolean) => void;
+  onCreateTask: () => void;
+  onCreateMilestone: () => void;
+  canCreateTasks: boolean;
+  canManageSchedule: boolean;
 }) {
-  const activeChips = activeFilterChips(filters);
+  const activeChips = activeFilterChips(filters, phases, users);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (filterOpen) {
+        onFilterOpenChange(false);
+      }
+      if (viewOpen) {
+        onViewOpenChange(false);
+      }
+      if (newMenuOpen) {
+        onNewMenuOpenChange(false);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [filterOpen, newMenuOpen, onFilterOpenChange, onNewMenuOpenChange, onViewOpenChange, viewOpen]);
 
   return (
     <section className="plan-workbench-toolbar" aria-label="Plan controls">
-      <div className="plan-filter-grid">
-        <label>
-          Search
-          <input value={filters.search} placeholder="Tasks, milestones, phases, assignees" onChange={(event) => onFiltersChange({ search: event.target.value })} />
+      <div className="plan-toolbar-row">
+        <label className="plan-search-field">
+          <span className="sr-only">Search</span>
+          <input value={filters.search} placeholder="Search tasks, phases, milestones, assignees" onChange={(event) => onFiltersChange({ search: event.target.value })} aria-label="Search" />
+          {filters.search ? <button className="icon-button mini" type="button" aria-label="Clear search" onClick={() => onFiltersChange({ search: "" })}><X size={13} aria-hidden="true" /></button> : null}
         </label>
-        <label>
-          Phase
-          <select value={filters.phaseId} onChange={(event) => onFiltersChange({ phaseId: event.target.value })}>
-            <option value="all">All phases</option>
-            {phases.map((phase, index) => <option key={phase.id} value={phase.id}>{index + 1}. {phase.name}</option>)}
-          </select>
-        </label>
-        <label>
-          Assignee
-          <select value={filters.assigneeId} onChange={(event) => onFiltersChange({ assigneeId: event.target.value })}>
-            <option value="all">All assignees</option>
-            <option value="__unassigned">Unassigned</option>
-            {users.filter((user) => user.role !== "client").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={filters.status} onChange={(event) => onFiltersChange({ status: event.target.value })}>
-            <option value="all">All statuses</option>
-            {Object.entries(taskStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label>
-          Priority
-          <select value={filters.priority} onChange={(event) => onFiltersChange({ priority: event.target.value })}>
-            <option value="all">All priorities</option>
-            {["low", "medium", "high", "urgent"].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
-          </select>
-        </label>
-        <label>
-          Date start
-          <input type="date" value={filters.dateStart} onChange={(event) => onFiltersChange({ dateStart: event.target.value })} />
-        </label>
-        <label>
-          Date end
-          <input type="date" value={filters.dateEnd} onChange={(event) => onFiltersChange({ dateEnd: event.target.value })} />
-        </label>
-      </div>
-      <div className="plan-toggle-row">
-        {[
-          ["overdueOnly", "Overdue"],
-          ["blockedOnly", "Blocked"],
-          ["waitingOnClientOnly", "Waiting on client"],
-          ["milestonesOnly", "Milestones"],
-          ["unscheduledOnly", "Unscheduled"],
-          ["scheduleErrorsOnly", "Schedule errors"]
-        ].map(([key, label]) => (
-          <label className="toggle-field" key={key}>
-            <input type="checkbox" checked={Boolean(filters[key as keyof PlanFilters])} onChange={(event) => onFiltersChange({ [key]: event.target.checked } as Partial<PlanFilters>)} />
-            {label}
-          </label>
-        ))}
-      </div>
-      <div className="plan-control-row">
-        <label>
-          Group
-          <select value={grouping} onChange={(event) => onGroupingChange(event.target.value as PlanGrouping)}>
-            <option value="phase">Phase</option>
-            <option value="assignee">Assignee</option>
-            <option value="status">Status</option>
-            <option value="priority">Priority</option>
-          </select>
-        </label>
-        <label>
-          Color
-          <select value={colorMode} onChange={(event) => onColorModeChange(event.target.value as PlanColorMode)}>
-            <option value="status">Status</option>
-            <option value="phase">Phase</option>
-            <option value="assignee">Assignee</option>
-            <option value="priority">Priority</option>
-          </select>
-        </label>
-        <div className="segmented-control" aria-label="Timeline zoom">
-          {(["day", "week", "month", "quarter", "fit"] as TimelineZoomMode[]).map((mode) => (
-            <button className={mode === zoomMode ? "active" : ""} type="button" key={mode} onClick={() => onZoomChange(mode)}>
-              {mode === "fit" ? "Fit Project" : mode}
-            </button>
-          ))}
-        </div>
-        <button className="secondary-button" type="button" onClick={onPrevious}>Previous Period</button>
-        <button className="secondary-button" type="button" onClick={onNext}>Next Period</button>
+        <button ref={filterButtonRef} className="secondary-button" type="button" aria-expanded={filterOpen} onClick={() => onFilterOpenChange(!filterOpen)}>
+          <Filter size={16} aria-hidden="true" />
+          {activeFilterCount > 0 ? `Filter ${activeFilterCount}` : "Filter"}
+        </button>
         <button className="secondary-button" type="button" onClick={onToday}><CalendarDays size={16} aria-hidden="true" />Today</button>
-        <button className="secondary-button" type="button" onClick={onExpandAll}>Expand All</button>
-        <button className="secondary-button" type="button" onClick={onCollapseAll}>Collapse All</button>
+        <button className="secondary-button compact-icon-button" type="button" aria-label="Previous period" onClick={onPrevious}>‹</button>
+        <label className="toolbar-select-label">
+          <span className="sr-only">Timeline zoom</span>
+          <select aria-label="Timeline zoom" value={zoomMode} onChange={(event) => onZoomChange(event.target.value as TimelineZoomMode)}>
+            <option value="day">Day</option>
+            <option value="week">Week</option>
+            <option value="month">Month</option>
+            <option value="quarter">Quarter</option>
+            <option value="fit">Fit Project</option>
+          </select>
+        </label>
+        <button className="secondary-button compact-icon-button" type="button" aria-label="Next period" onClick={onNext}>›</button>
+        <button ref={viewButtonRef} className="secondary-button" type="button" aria-expanded={viewOpen} onClick={() => onViewOpenChange(!viewOpen)}>
+          <SlidersHorizontal size={16} aria-hidden="true" />
+          View
+        </button>
+        {(canCreateTasks || canManageSchedule) ? (
+          <div className="toolbar-menu-anchor">
+            <button ref={newButtonRef} className="action-button" type="button" aria-expanded={newMenuOpen} onClick={() => onNewMenuOpenChange(!newMenuOpen)}>
+              <Plus size={16} aria-hidden="true" />
+              New
+            </button>
+            {newMenuOpen ? (
+              <div className="plan-popover compact-menu" role="menu" aria-label="New work item">
+                {canCreateTasks ? <button type="button" role="menuitem" onClick={onCreateTask}>New Task</button> : null}
+                {canManageSchedule ? <button type="button" role="menuitem" onClick={onCreateMilestone}>New Milestone</button> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <div className="active-filter-row">
-        <span>{matchingCount} matching item{matchingCount === 1 ? "" : "s"}</span>
-        {activeChips.map((chip) => (
-          <button className="filter-chip" key={chip.key} type="button" onClick={() => onClearFilter(chip.key)}>
+
+      {filterOpen ? (
+        <div className="plan-filter-drawer" role="dialog" aria-label="Plan filters">
+          <div className="drawer-header compact">
+            <div>
+              <strong>Filters</strong>
+              <span>{matchingCount} matching item{matchingCount === 1 ? "" : "s"}</span>
+            </div>
+            <button className="icon-button" type="button" onClick={() => onFilterOpenChange(false)} aria-label="Close filters"><X size={16} aria-hidden="true" /></button>
+          </div>
+          <div className="plan-filter-grid">
+            <label>Phase
+              <select value={filters.phaseId} onChange={(event) => onFiltersChange({ phaseId: event.target.value })}>
+                <option value="all">All phases</option>
+                {phases.map((phase, index) => <option key={phase.id} value={phase.id}>{index + 1}. {phase.name}</option>)}
+              </select>
+            </label>
+            <label>Assignee
+              <select value={filters.assigneeId} onChange={(event) => onFiltersChange({ assigneeId: event.target.value })}>
+                <option value="all">All assignees</option>
+                <option value="__unassigned">Unassigned</option>
+                {users.filter((user) => user.role !== "client").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+            </label>
+            <label>Status
+              <select value={filters.status} onChange={(event) => onFiltersChange({ status: event.target.value })}>
+                <option value="all">All statuses</option>
+                {Object.entries(taskStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label>Priority
+              <select value={filters.priority} onChange={(event) => onFiltersChange({ priority: event.target.value })}>
+                <option value="all">All priorities</option>
+                {["low", "medium", "high", "urgent"].map((priority) => <option key={priority} value={priority}>{titleCase(priority)}</option>)}
+              </select>
+            </label>
+            <label>Start
+              <input type="date" value={filters.dateStart} onChange={(event) => onFiltersChange({ dateStart: event.target.value })} />
+            </label>
+            <label>End
+              <input type="date" value={filters.dateEnd} onChange={(event) => onFiltersChange({ dateEnd: event.target.value })} />
+            </label>
+          </div>
+          <div className="plan-toggle-row compact">
+            {[
+              ["overdueOnly", "Overdue"],
+              ["blockedOnly", "Blocked"],
+              ["waitingOnClientOnly", "Waiting on client"],
+              ["milestonesOnly", "Milestones"],
+              ["unscheduledOnly", "Unscheduled"],
+              ["scheduleErrorsOnly", "Needs scheduling attention"]
+            ].map(([key, label]) => (
+              <label className="toggle-field" key={key}>
+                <input type="checkbox" checked={Boolean(filters[key as keyof PlanFilters])} onChange={(event) => onFiltersChange({ [key]: event.target.checked } as Partial<PlanFilters>)} />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={onClearAll}>Clear All</button>
+            <button className="action-button" type="button" onClick={() => onFilterOpenChange(false)}>Done</button>
+          </div>
+        </div>
+      ) : null}
+
+      {viewOpen ? (
+        <div className="plan-popover view-popover" role="dialog" aria-label="Plan view settings">
+          <label>Group by
+            <select value={grouping} onChange={(event) => onGroupingChange(event.target.value as PlanGrouping)}>
+              <option value="phase">Phase</option>
+              <option value="assignee">Assignee</option>
+              <option value="status">Status</option>
+              <option value="priority">Priority</option>
+            </select>
+          </label>
+          <label>Color by
+            <select value={colorMode} onChange={(event) => onColorModeChange(event.target.value as PlanColorMode)}>
+              <option value="status">Status</option>
+              <option value="phase">Phase</option>
+              <option value="assignee">Assignee</option>
+              <option value="priority">Priority</option>
+            </select>
+          </label>
+          <label className="toggle-field"><input type="checkbox" checked={showDependencies} onChange={(event) => onToggleDependencies(event.target.checked)} />Show dependencies</label>
+          <label className="toggle-field"><input type="checkbox" checked={showMilestones} onChange={(event) => onToggleMilestones(event.target.checked)} />Show milestones</label>
+          <label className="toggle-field"><input type="checkbox" checked={showCompletedTasks} onChange={(event) => onToggleCompletedTasks(event.target.checked)} />Show completed tasks</label>
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={onExpandAll}>Expand All</button>
+            <button className="secondary-button" type="button" onClick={onCollapseAll}>Collapse All</button>
+          </div>
+          <ColorLegend colorMode={colorMode} phases={phases} users={users} />
+        </div>
+      ) : null}
+
+      {activeChips.length > 0 ? (
+        <div className="active-filter-row">
+          <span>{matchingCount} matching item{matchingCount === 1 ? "" : "s"}</span>
+          {activeChips.map((chip) => (
+            <button className="filter-chip" key={chip.key} type="button" onClick={() => onClearFilter(chip.key)}>
             {chip.label}
             <X size={13} aria-hidden="true" />
           </button>
-        ))}
-        {activeChips.length > 0 ? <button className="link-button" type="button" onClick={onClearAll}>Clear All</button> : null}
-      </div>
-      <ColorLegend colorMode={colorMode} phases={phases} users={users} />
+          ))}
+          <button className="link-button" type="button" onClick={onClearAll}>Clear All</button>
+        </div>
+      ) : null}
     </section>
   );
 }
 
-function activeFilterChips(filters: PlanFilters) {
-  return (Object.keys(filters) as Array<keyof PlanFilters>).flatMap((key) => {
-    const value = filters[key];
-    const defaultValue = defaultPlanFilters[key];
-    if (value === defaultValue || value === "" || value === false) {
-      return [];
+function activeFilterChips(filters: PlanFilters, phases: Phase[], users: User[]) {
+  const phaseById = new Map(phases.map((phase, index) => [phase.id, `${index + 1}. ${phase.name}`]));
+  const userById = new Map(users.map((user) => [user.id, user.name]));
+  const chips: Array<{ key: keyof PlanFilters; label: string }> = [];
+
+  if (filters.phaseId !== "all") {
+    chips.push({ key: "phaseId", label: `Phase: ${phaseById.get(filters.phaseId) ?? "Unknown phase"}` });
+  }
+  if (filters.assigneeId !== "all") {
+    chips.push({ key: "assigneeId", label: `Assignee: ${filters.assigneeId === "__unassigned" ? "Unassigned" : userById.get(filters.assigneeId) ?? "Unknown assignee"}` });
+  }
+  if (filters.status !== "all") {
+    chips.push({ key: "status", label: `Status: ${taskStatusLabels[filters.status as Task["status"]] ?? titleCase(filters.status)}` });
+  }
+  if (filters.priority !== "all") {
+    chips.push({ key: "priority", label: `Priority: ${titleCase(filters.priority)}` });
+  }
+  if (filters.dateStart) {
+    chips.push({ key: "dateStart", label: `Start: ${formatDateOnly(filters.dateStart)}` });
+  }
+  if (filters.dateEnd) {
+    chips.push({ key: "dateEnd", label: `End: ${formatDateOnly(filters.dateEnd)}` });
+  }
+
+  [
+    ["overdueOnly", "Overdue"],
+    ["blockedOnly", "Blocked"],
+    ["waitingOnClientOnly", "Waiting on client"],
+    ["milestonesOnly", "Milestones"],
+    ["unscheduledOnly", "Unscheduled"],
+    ["scheduleErrorsOnly", "Needs scheduling attention"]
+  ].forEach(([key, label]) => {
+    if (filters[key as keyof PlanFilters]) {
+      chips.push({ key: key as keyof PlanFilters, label });
     }
-    return [{ key, label: `${key.replace(/Only$/, "").replace(/([A-Z])/g, " $1")}: ${String(value).replaceAll("_", " ")}` }];
   });
+
+  return chips;
+}
+
+function countActiveFilters(filters: PlanFilters) {
+  return activeFilterChips(filters, [], []).length;
+}
+
+function titleCase(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function statusTone(status: Task["status"]) {
+  if (status === "done") {
+    return "success";
+  }
+  if (status === "blocked") {
+    return "danger";
+  }
+  if (status === "waiting_on_client") {
+    return "warning";
+  }
+  return "info";
+}
+
+function formatTaskDateRange(task: Task) {
+  if (!task.startDate && !task.dueDate) {
+    return "Unscheduled";
+  }
+  if (task.startDate && task.dueDate) {
+    return task.startDate === task.dueDate ? formatDateOnly(task.startDate) : `${formatDateOnly(task.startDate)}-${formatDateOnly(task.dueDate)}`;
+  }
+  return task.startDate ? `Starts ${formatDateOnly(task.startDate)}` : `Due ${formatDateOnly(task.dueDate)}`;
 }
 
 function ColorLegend({ colorMode, phases, users }: { colorMode: PlanColorMode; phases: Phase[]; users: User[] }) {
@@ -876,7 +1149,7 @@ function ColorLegend({ colorMode, phases, users }: { colorMode: PlanColorMode; p
   return (
     <div className="plan-color-legend" aria-label={`Color mode: ${colorMode}`}>
       <strong>Color: {colorMode}</strong>
-      {labels.map((label, index) => <span key={label}><i className={`legend-swatch color-${index % 8}`} />{label}</span>)}
+      {labels.map((label, index) => <span key={`${label}-${index}`}><i className={`legend-swatch color-${index % 8}`} />{label}</span>)}
     </div>
   );
 }
@@ -884,37 +1157,33 @@ function ColorLegend({ colorMode, phases, users }: { colorMode: PlanColorMode; p
 function HierarchyRow({
   row,
   users,
-  phases,
-  allTasks,
-  canManageSchedule,
   selectedTaskIds,
   onToggleCollapse,
   onToggleTask,
   onOpenTask,
-  onProposeTaskChange,
-  onCreateDependency,
   rowTop
 }: {
   row: ScheduleRow;
   users: User[];
-  phases: Phase[];
-  allTasks: Task[];
-  canManageSchedule: boolean;
   selectedTaskIds: Set<string>;
   onToggleCollapse: (id: string) => void;
   onToggleTask: (taskId: string) => void;
   onOpenTask: (taskId: string) => void;
-  onProposeTaskChange: (task: Task, updates: Pick<Partial<Task>, "startDate" | "dueDate" | "phaseId">, title: string) => void;
-  onCreateDependency: (taskId: string, dependsOnTaskId: string, type: TaskDependency["type"]) => Promise<void>;
   rowTop: number;
 }) {
+  const taskOwner = row.type === "task" ? users.find((user) => user.id === row.task.assigneeId) : undefined;
+
   return (
     <div className={`plan-hierarchy-row row-${row.type}`} style={{ top: rowTop }} role="row" aria-label={row.accessibilityLabel}>
       {row.type === "phase" || row.type === "group" ? (
         <button className="plan-row-title group-title" type="button" onClick={() => onToggleCollapse(row.id)} aria-expanded={row.expanded}>
           {row.expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
           <span>{row.type === "phase" ? `${row.phaseIndex + 1}. ${row.phase.name}` : row.label}</span>
-          <small>{row.completedTaskCount}/{row.taskCount} complete · {row.warningCount} warning{row.warningCount === 1 ? "" : "s"}</small>
+          <small>
+            {row.completedTaskCount} of {row.taskCount} complete
+            {row.type === "phase" ? ` · ${formatDateOnly(row.phase.startDate)}-${formatDateOnly(row.phase.endDate)}` : ""}
+            {row.warningCount > 0 ? ` · ${row.warningCount} warning${row.warningCount === 1 ? "" : "s"}` : ""}
+          </small>
         </button>
       ) : null}
       {row.type === "task" ? (
@@ -924,11 +1193,9 @@ function HierarchyRow({
             <span>{row.task.title}</span>
             <small>{row.phase?.name ?? "Unassigned Phase"} · {getTaskScheduleState(row.task)}</small>
           </button>
-          <span>{users.find((user) => user.id === row.task.assigneeId)?.name ?? "Unassigned"}</span>
-          <input aria-label={`Start date for ${row.task.title}`} disabled={!row.canEdit} type="date" value={row.task.startDate ?? ""} onChange={(event) => onProposeTaskChange(row.task, { startDate: event.target.value || null }, "Update task start")} />
-          <input aria-label={`Due date for ${row.task.title}`} disabled={!row.canEdit} type="date" value={row.task.dueDate ?? ""} onChange={(event) => onProposeTaskChange(row.task, { dueDate: event.target.value || null }, "Update task due date")} />
-          <span>{taskStatusLabels[row.task.status]}</span>
-          {canManageSchedule ? <DependencyEditor task={row.task} allTasks={allTasks} onCreateDependency={onCreateDependency} /> : null}
+          <span className="owner-pill" aria-label={`Owner ${taskOwner?.name ?? "Unassigned"}`}>{taskOwner?.avatarInitials ?? "UA"}</span>
+          <span className="date-range-text">{formatTaskDateRange(row.task)}</span>
+          <span className={`status-badge compact ${statusTone(row.task.status)}`}>{taskStatusLabels[row.task.status]}</span>
         </>
       ) : null}
       {row.type === "milestone" ? (
@@ -945,41 +1212,6 @@ function HierarchyRow({
   );
 }
 
-function DependencyEditor({
-  task,
-  allTasks,
-  onCreateDependency
-}: {
-  task: Task;
-  allTasks?: Task[];
-  onCreateDependency: (taskId: string, dependsOnTaskId: string, type: TaskDependency["type"]) => Promise<void>;
-}) {
-  const [target, setTarget] = useState("");
-  const [type, setType] = useState<TaskDependency["type"]>("finish_to_start");
-  const candidates = (allTasks ?? []).filter((item) => item.id !== task.id);
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return (
-    <span className="dependency-inline-editor">
-      <select aria-label={`Dependency target for ${task.title}`} value={target} onChange={(event) => setTarget(event.target.value)}>
-        <option value="">Dependency</option>
-        {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title}</option>)}
-      </select>
-      <select aria-label="Dependency type" value={type} onChange={(event) => setType(event.target.value as TaskDependency["type"])}>
-        <option value="finish_to_start">FS</option>
-        <option value="start_to_start">SS</option>
-        <option value="finish_to_finish">FF</option>
-      </select>
-      <button className="icon-button mini" type="button" disabled={!target} onClick={() => void onCreateDependency(task.id, target, type)} aria-label={`Create dependency from ${target} to ${task.title}`}>
-        <Link2 size={13} aria-hidden="true" />
-      </button>
-    </span>
-  );
-}
-
 function TimelineRow({
   row,
   rowTop,
@@ -991,8 +1223,7 @@ function TimelineRow({
   dragState,
   onOpenTask,
   onSelectMilestone,
-  onTaskPointerDown,
-  onProposeMilestoneChange
+  onTaskPointerDown
 }: {
   row: ScheduleRow;
   rowTop: number;
@@ -1004,8 +1235,7 @@ function TimelineRow({
   dragState: DragState | null;
   onOpenTask: (taskId: string) => void;
   onSelectMilestone: (milestoneId: string) => void;
-  onTaskPointerDown: (task: Task, mode: DragState["mode"], event: PointerEvent<HTMLButtonElement>) => void;
-  onProposeMilestoneChange: (milestone: Milestone, updates: Partial<Milestone>, title: string) => void;
+  onTaskPointerDown: (task: Task, mode: DragState["mode"], event: PointerEvent<HTMLElement>) => void;
 }) {
   if (row.type === "phase") {
     const x = dateToX(row.phase.startDate, range, scale);
@@ -1040,9 +1270,23 @@ function TimelineRow({
           aria-selected={row.selected}
           title={`${row.task.title}: ${startDate} to ${dueDate}`}
         >
-          <span className="resize-handle start" aria-label={`Resize start for ${row.task.title}`} onPointerDown={(event) => onTaskPointerDown(row.task, "resize-start", event)} />
+          <span
+            className="resize-handle start"
+            aria-label={`Resize start for ${row.task.title}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onTaskPointerDown(row.task, "resize-start", event);
+            }}
+          />
           <span className="task-bar-label">{row.task.status.replace("_", " ")}</span>
-          <span className="resize-handle end" aria-label={`Resize due date for ${row.task.title}`} onPointerDown={(event) => onTaskPointerDown(row.task, "resize-end", event)} />
+          <span
+            className="resize-handle end"
+            aria-label={`Resize due date for ${row.task.title}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onTaskPointerDown(row.task, "resize-end", event);
+            }}
+          />
         </button>
         {preview ? <span className="drag-preview-label" style={{ left: x + hitWidth + 6 }}>{startDate} - {dueDate}</span> : null}
       </div>
@@ -1063,13 +1307,7 @@ function TimelineRow({
         >
           <Diamond size={18} aria-hidden="true" />
         </button>
-        <input
-          className="milestone-date-input"
-          aria-label={`Move milestone ${row.milestone.name}`}
-          type="date"
-          value={row.milestone.date}
-          onChange={(event) => onProposeMilestoneChange(row.milestone, { date: event.target.value }, "Move milestone")}
-        />
+        <span className="milestone-label" style={{ left: x + 16 }}>{row.milestone.name}</span>
       </div>
     );
   }
@@ -1125,6 +1363,10 @@ function DependencyLayer({
 }
 
 function colorClass(task: Task, mode: PlanColorMode, phases: Phase[], users: User[]) {
+  if (mode === "status") {
+    return `status-${task.status}`;
+  }
+
   const source = mode === "status"
     ? task.status
     : mode === "priority"
@@ -1319,6 +1561,32 @@ function ConflictSummary({ conflicts }: { conflicts: ScheduleConflict[] }) {
   );
 }
 
+function CreateDrawer({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <aside className="detail-panel create-drawer" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="detail-panel-header">
+        <div>
+          <p className="eyebrow">Create</p>
+          <h2>{title}</h2>
+        </div>
+        <button className="icon-button" type="button" onClick={onClose} aria-label={`Close ${title}`}><X size={18} aria-hidden="true" /></button>
+      </div>
+      {children}
+    </aside>
+  );
+}
+
 function ScheduleChangeDialog({
   change,
   saving,
@@ -1405,6 +1673,7 @@ function DependencyManager({
   tasks,
   canManageSchedule,
   onOpenTask,
+  onCreateDependency,
   onUpdateDependency,
   onDeleteDependency,
   onUndo
@@ -1413,25 +1682,55 @@ function DependencyManager({
   tasks: Task[];
   canManageSchedule: boolean;
   onOpenTask: (taskId: string) => void;
+  onCreateDependency: (taskId: string, dependsOnTaskId: string, type: TaskDependency["type"]) => Promise<void>;
   onUpdateDependency: (dependencyId: string, updates: Partial<TaskDependency>) => Promise<void>;
   onDeleteDependency: (dependencyId: string) => Promise<void>;
   onUndo: (dependency: TaskDependency) => void;
 }) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
-
-  if (dependencies.length === 0) {
-    return (
-      <section className="dependency-manager">
-        <h2>Dependencies</h2>
-        <p>No dependencies yet.</p>
-      </section>
-    );
-  }
+  const [draft, setDraft] = useState({
+    taskId: tasks[0]?.id ?? "",
+    dependsOnTaskId: tasks.find((task) => task.id !== tasks[0]?.id)?.id ?? "",
+    type: "finish_to_start" as TaskDependency["type"]
+  });
+  const candidates = tasks.filter((task) => task.id !== draft.taskId);
 
   return (
     <section className="dependency-manager">
-      <h2>Dependencies</h2>
-      <div className="table-wrap">
+      <div className="dependency-manager-header">
+        <div>
+          <h2>Dependencies</h2>
+          <p>Manage dependency links when scheduling context is needed.</p>
+        </div>
+        {canManageSchedule && tasks.length > 1 ? (
+          <form
+            className="dependency-create-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onCreateDependency(draft.taskId, draft.dependsOnTaskId, draft.type);
+            }}
+          >
+            <select aria-label="Dependency task" value={draft.taskId} onChange={(event) => {
+              const taskId = event.target.value;
+              const nextDependsOnTaskId = taskId === draft.dependsOnTaskId ? tasks.find((task) => task.id !== taskId)?.id ?? "" : draft.dependsOnTaskId;
+              setDraft({ ...draft, taskId, dependsOnTaskId: nextDependsOnTaskId });
+            }}>
+              {tasks.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+            </select>
+            <select aria-label="Dependency predecessor" value={draft.dependsOnTaskId} onChange={(event) => setDraft({ ...draft, dependsOnTaskId: event.target.value })}>
+              {candidates.map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+            </select>
+            <select aria-label="Dependency type" value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TaskDependency["type"] })}>
+              <option value="finish_to_start">Finish to start</option>
+              <option value="start_to_start">Start to start</option>
+              <option value="finish_to_finish">Finish to finish</option>
+            </select>
+            <button className="secondary-button" type="submit" disabled={!draft.taskId || !draft.dependsOnTaskId}>Add Dependency</button>
+          </form>
+        ) : null}
+      </div>
+      {dependencies.length === 0 ? <p>No dependencies yet.</p> : (
+        <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -1479,7 +1778,8 @@ function DependencyManager({
             })}
           </tbody>
         </table>
-      </div>
+        </div>
+      )}
     </section>
   );
 }
