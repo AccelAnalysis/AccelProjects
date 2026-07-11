@@ -353,6 +353,90 @@ export type ProjectCalendarEvent = {
   lastErrorMessage: string | null;
 };
 
+export type ClientReportStatus = "draft" | "ready_for_review" | "approved";
+
+export type ClientReportItem = {
+  id: string;
+  title: string;
+  status: string;
+  dueDate: string;
+  owner: string;
+};
+
+export type ClientProgressReport = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  title: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  executiveSummary: string;
+  progressSummary: string;
+  nextSteps: string;
+  clientActions: string[];
+  highlights: string[];
+  risks: ClientReportItem[];
+  milestones: ClientReportItem[];
+  completedTasks: ClientReportItem[];
+  upcomingTasks: ClientReportItem[];
+  includeBudget: boolean;
+  includeInternalNotes: boolean;
+  status: ClientReportStatus;
+  latestApprovedSnapshotId: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  approvedAt: string | null;
+  approvedBy: string | null;
+};
+
+export type ClientReportSnapshot = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  reportId: string;
+  title: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  project: Record<string, unknown>;
+  client: Record<string, unknown>;
+  sections: {
+    executiveSummary: string;
+    progressSummary: string;
+    nextSteps: string;
+    clientActions: string[];
+    highlights: string[];
+    risks: ClientReportItem[];
+    milestones: ClientReportItem[];
+    completedTasks: ClientReportItem[];
+    upcomingTasks: ClientReportItem[];
+  };
+  contentHash: string;
+  projectRevisionAtApproval: number;
+  sourceReportUpdatedAt: string;
+  approvedBy: string;
+  approvedAt: string;
+  createdAt: string;
+};
+
+export type ClientReportArtifact = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  reportId: string;
+  snapshotId: string;
+  purpose: "download" | "email_attachment" | "print";
+  filename: string;
+  contentType: "application/pdf";
+  sizeBytes: number;
+  sha256: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type ProjectVersion = {
   id: string;
   projectId: string;
@@ -433,5 +517,8 @@ export type ProjectState = {
   activityEvents: ProjectActivityEvent[];
   projectCommunications: ProjectCommunication[];
   projectCalendarEvents: ProjectCalendarEvent[];
+  clientProgressReports: ClientProgressReport[];
+  clientReportSnapshots: ClientReportSnapshot[];
+  clientReportArtifacts: ClientReportArtifact[];
   projectVersions: ProjectVersion[];
 };

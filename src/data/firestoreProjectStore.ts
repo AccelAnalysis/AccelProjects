@@ -27,6 +27,9 @@ import {
 import type { ProjectUpdatePlan } from "../updates/projectUpdateTypes";
 import type {
   Client,
+  ClientProgressReport,
+  ClientReportArtifact,
+  ClientReportSnapshot,
   Milestone,
   Phase,
   Project,
@@ -50,7 +53,7 @@ import type {
 export const FIRESTORE_ORGANIZATION_ID = "org_accel_projects";
 
 type CollectionKey = keyof ProjectState;
-type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectCommunications" | "projectCalendarEvents" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
+type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectCommunications" | "projectCalendarEvents" | "clientProgressReports" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
 type FirestorePath = [string, ...string[]];
 
 const rootCollectionMap = {
@@ -71,6 +74,7 @@ const projectCollectionMap = {
   activityEvents: "activityEvents",
   projectCommunications: "communications",
   projectCalendarEvents: "calendarEvents",
+  clientProgressReports: "reports",
   projectVersions: "versions",
   projectExportSnapshots: "exportSnapshots",
   projectUpdateManifests: "updateManifests"
@@ -399,6 +403,9 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
       activityEvents: [],
       projectCommunications: [],
       projectCalendarEvents: [],
+      clientProgressReports: [],
+      clientReportSnapshots: [],
+      clientReportArtifacts: [],
       projectVersions: []
     };
   }
@@ -419,6 +426,9 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     activityEvents,
     projectCommunications,
     projectCalendarEvents,
+    clientProgressReports,
+    clientReportSnapshotsByProject,
+    clientReportArtifactsByProject,
     projectVersions,
     taskCommentsByProject
   ] = await Promise.all([
@@ -433,6 +443,23 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     readProjectCollections<ProjectActivityEvent>(projects, projectCollectionMap.activityEvents),
     readProjectCollections<ProjectCommunication>(projects, projectCollectionMap.projectCommunications),
     readProjectCollections<ProjectCalendarEvent>(projects, projectCollectionMap.projectCalendarEvents),
+    readProjectCollections<ClientProgressReport>(projects, projectCollectionMap.clientProgressReports),
+    Promise.all(projects.map(async (project) => {
+      const reports = await readCollection<ClientProgressReport>([...projectPath(project.id), projectCollectionMap.clientProgressReports]);
+      const snapshots = await Promise.all(
+        reports.map((report) => readCollection<ClientReportSnapshot>([...projectPath(project.id), projectCollectionMap.clientProgressReports, report.id, "snapshots"]))
+      );
+
+      return snapshots.flat();
+    })),
+    Promise.all(projects.map(async (project) => {
+      const reports = await readCollection<ClientProgressReport>([...projectPath(project.id), projectCollectionMap.clientProgressReports]);
+      const artifacts = await Promise.all(
+        reports.map((report) => readCollection<ClientReportArtifact>([...projectPath(project.id), projectCollectionMap.clientProgressReports, report.id, "artifacts"]))
+      );
+
+      return artifacts.flat();
+    })),
     readProjectCollections<ProjectVersion>(projects, projectCollectionMap.projectVersions),
     Promise.all(projects.map(async (project) => {
       const projectTasks = await readCollection<Task>([...projectPath(project.id), projectCollectionMap.tasks]);
@@ -460,6 +487,9 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     activityEvents,
     projectCommunications,
     projectCalendarEvents,
+    clientProgressReports,
+    clientReportSnapshots: clientReportSnapshotsByProject.flat(),
+    clientReportArtifacts: clientReportArtifactsByProject.flat(),
     projectVersions
   };
 }
@@ -539,6 +569,7 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
   writeProjectScoped(initialState.activityEvents, "activityEvents");
   writeProjectScoped(initialState.projectCommunications, "projectCommunications");
   writeProjectScoped(initialState.projectCalendarEvents, "projectCalendarEvents");
+  writeProjectScoped(initialState.clientProgressReports, "clientProgressReports");
   writeProjectScoped(initialState.projectVersions, "projectVersions");
 
   initialState.taskComments.forEach((comment) => {

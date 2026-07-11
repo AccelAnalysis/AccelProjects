@@ -86,6 +86,45 @@ function toGraphRecipients(recipients) {
   }));
 }
 
+const defaultDirectAttachmentLimitBytes = 2_500_000;
+
+function normalizeGraphAttachments(attachments = [], maxDirectAttachmentBytes = defaultDirectAttachmentLimitBytes) {
+  if (!Array.isArray(attachments)) {
+    throw new GraphServiceError("Attachments must be a list.", { status: 400, code: "invalid_attachments", category: "validation" });
+  }
+
+  return attachments.map((attachment) => {
+    const name = String(attachment?.name || attachment?.filename || "").trim();
+    const contentType = String(attachment?.contentType || attachment?.mimeType || "application/octet-stream").trim();
+    const bytes = Buffer.isBuffer(attachment?.contentBytes)
+      ? attachment.contentBytes
+      : Buffer.from(String(attachment?.contentBytes || ""), "base64");
+
+    if (!name) {
+      throw new GraphServiceError("Attachment filename is required.", { status: 400, code: "invalid_attachment_name", category: "validation" });
+    }
+
+    if (bytes.byteLength === 0) {
+      throw new GraphServiceError("Attachment content is required.", { status: 400, code: "empty_attachment", category: "validation" });
+    }
+
+    if (bytes.byteLength > maxDirectAttachmentBytes) {
+      throw new GraphServiceError("Report PDF is too large for direct Microsoft Graph email attachment delivery.", {
+        status: 413,
+        code: "attachment_too_large",
+        category: "validation"
+      });
+    }
+
+    return {
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name,
+      contentType,
+      contentBytes: bytes.toString("base64")
+    };
+  });
+}
+
 async function readSafeGraphError(response) {
   try {
     const data = await response.json();
@@ -162,17 +201,26 @@ export async function graphJsonRequest(path, { method = "GET", body, accessToken
   }
 }
 
-export async function sendProjectEmailViaGraph({ communication, env = process.env, getAccessToken, fetchImpl = fetch }) {
+export async function sendProjectEmailViaGraph({
+  communication,
+  env = process.env,
+  getAccessToken,
+  fetchImpl = fetch,
+  attachments = [],
+  allowAttachments = false,
+  maxDirectAttachmentBytes = defaultDirectAttachmentLimitBytes
+}) {
   const config = getMicrosoftProjectConfig(env);
 
   if (!config.configured) {
     throw new GraphServiceError("Microsoft Graph email is not configured.", { code: "missing_graph_config", category: "configuration" });
   }
 
-  if (Array.isArray(communication.attachmentRefs) && communication.attachmentRefs.length > 0) {
+  if (Array.isArray(communication.attachmentRefs) && communication.attachmentRefs.length > 0 && !allowAttachments) {
     throw new GraphServiceError("Report attachments are reserved for Run 3 and cannot be sent yet.", { status: 400, code: "attachments_not_supported", category: "validation" });
   }
 
+  const graphAttachments = allowAttachments ? normalizeGraphAttachments(attachments, maxDirectAttachmentBytes) : [];
   const sender = assertAllowedMailbox(config.senderMailbox, env);
   const toRecipients = validateRecipients(communication.toRecipients, "To recipients");
   const ccRecipients = validateRecipients(communication.ccRecipients || [], "CC recipients");
@@ -197,7 +245,8 @@ export async function sendProjectEmailViaGraph({ communication, env = process.en
         },
         toRecipients: toGraphRecipients(toRecipients),
         ccRecipients: toGraphRecipients(ccRecipients),
-        bccRecipients: toGraphRecipients(bccRecipients)
+        bccRecipients: toGraphRecipients(bccRecipients),
+        ...(graphAttachments.length > 0 ? { attachments: graphAttachments } : {})
       },
       saveToSentItems: true
     }
