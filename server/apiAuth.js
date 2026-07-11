@@ -4,7 +4,7 @@ import { getFirestore } from "firebase-admin/firestore";
 
 export const API_ORGANIZATION_ID = process.env.FIRESTORE_ORGANIZATION_ID || "org_accel_projects";
 
-function getAdminApp() {
+export function getAdminApp() {
   if (getApps().length > 0) {
     return getApps()[0];
   }

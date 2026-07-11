@@ -1,4 +1,4 @@
-import { Bell, Download, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle } from "lucide-react";
+import { Bell, CalendarDays, Download, ExternalLink, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityFeed,
@@ -13,8 +13,18 @@ import {
 } from "../components/project/ProjectWidgets";
 import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
+import {
+  cancelProjectCalendarEvent,
+  createProjectCalendarDraft,
+  createProjectCalendarEvent,
+  createProjectCommunication,
+  sendProjectCommunication,
+  updateProjectCalendarEvent,
+  type ProjectCalendarEventInput,
+  type ProjectCommunicationInput
+} from "../data/api";
 import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath, type ProjectTabId } from "../routing/projectRoutes";
-import type { NotificationPreferences, Task } from "../types";
+import type { NotificationPreferences, ProjectCalendarEvent, ProjectCommunication, ProjectRecipient, Task } from "../types";
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
@@ -34,6 +44,8 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     documents: projectState.documents.filter((document) => document.projectId === projectId),
     metrics: projectState.metrics.filter((metric) => metric.projectId === projectId),
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
+    communications: projectState.projectCommunications.filter((communication) => communication.projectId === projectId),
+    calendarEvents: projectState.projectCalendarEvents.filter((event) => event.projectId === projectId),
     versions: projectState.projectVersions.filter((version) => version.projectId === projectId),
     dependencies: projectState.taskDependencies.filter((dependency) => (
       projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
@@ -448,24 +460,366 @@ export function RisksPage({ projectState, selectedProjectId, canManageRisks, onA
   return <RiskRegister risks={risks} canManage={canManageRisks} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} />;
 }
 
-export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal }: ProjectPageProps) {
-  const { events } = projectSlices(projectState, selectedProjectId);
+type MessageTab = "all" | "email" | "calendar" | "activity";
+
+const defaultEmailForm: ProjectCommunicationInput = {
+  subject: "",
+  bodyText: "",
+  toRecipients: [],
+  ccRecipients: [],
+  bccRecipients: [],
+  audience: "client",
+  visibility: "internal"
+};
+
+function defaultCalendarForm(): ProjectCalendarEventInput {
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+  return {
+    title: "",
+    descriptionText: "",
+    visibility: "internal",
+    startDateTime: start.toISOString().slice(0, 16),
+    endDateTime: end.toISOString().slice(0, 16),
+    timeZone: "Eastern Standard Time",
+    isAllDay: false,
+    location: "",
+    attendees: [],
+    reminderMinutesBeforeStart: 15,
+    relatedEntityType: "project",
+    relatedEntityId: null
+  };
+}
+
+function parseRecipientText(value: string): ProjectRecipient[] {
+  return value
+    .split(/[,\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((email) => ({ email }));
+}
+
+function recipientText(recipients: ProjectRecipient[]) {
+  return recipients.map((recipient) => recipient.email).join(", ");
+}
+
+function statusLabel(status: string) {
+  return status === "accepted" ? "Accepted by Microsoft 365 for delivery" : status.replaceAll("_", " ");
+}
+
+function statusTone(status: string) {
+  if (["accepted", "scheduled"].includes(status)) return "success";
+  if (["failed", "unknown", "canceled"].includes(status)) return "danger";
+  if (["sending", "creating", "updating", "canceling"].includes(status)) return "warning";
+  return "info";
+}
+
+export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+  const { project, client, events, tasks, milestones } = projectSlices(projectState, selectedProjectId);
+  const [activeTab, setActiveTab] = useState<MessageTab>("all");
+  const [communications, setCommunications] = useState<ProjectCommunication[]>(() => projectState.projectCommunications.filter((communication) => communication.projectId === selectedProjectId));
+  const [calendarEvents, setCalendarEvents] = useState<ProjectCalendarEvent[]>(() => projectState.projectCalendarEvents.filter((event) => event.projectId === selectedProjectId));
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"email" | "calendar" | null>(null);
+  const [emailForm, setEmailForm] = useState<ProjectCommunicationInput>(defaultEmailForm);
+  const [calendarForm, setCalendarForm] = useState<ProjectCalendarEventInput>(defaultCalendarForm());
+  const [editingCalendarId, setEditingCalendarId] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const canManageCommunications = canViewInternal && canManage && !clientPreview;
+
+  useEffect(() => {
+    setCommunications(projectState.projectCommunications.filter((communication) => communication.projectId === selectedProjectId));
+    setCalendarEvents(projectState.projectCalendarEvents.filter((event) => event.projectId === selectedProjectId));
+  }, [projectState.projectCommunications, projectState.projectCalendarEvents, selectedProjectId]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || working) {
+        return;
+      }
+
+      setComposeOpen(false);
+      setScheduleOpen(false);
+      setReviewMode(null);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [working]);
+
+  function openCompose() {
+    setError("");
+    setNotice("");
+    setEmailForm({
+      ...defaultEmailForm,
+      subject: project ? `${project.name} project update` : "",
+      toRecipients: client?.email ? [{ name: client.contactName, email: client.email }] : []
+    });
+    setReviewMode(null);
+    setComposeOpen(true);
+  }
+
+  function openSchedule(calendarEvent?: ProjectCalendarEvent) {
+    setError("");
+    setNotice("");
+    if (calendarEvent) {
+      setEditingCalendarId(calendarEvent.id);
+      setCalendarForm({
+        title: calendarEvent.title,
+        descriptionText: calendarEvent.descriptionText,
+        visibility: calendarEvent.visibility,
+        startDateTime: calendarEvent.startDateTime.slice(0, 16),
+        endDateTime: calendarEvent.endDateTime.slice(0, 16),
+        timeZone: calendarEvent.timeZone,
+        isAllDay: calendarEvent.isAllDay,
+        location: calendarEvent.location,
+        attendees: calendarEvent.attendees,
+        reminderMinutesBeforeStart: calendarEvent.reminderMinutesBeforeStart,
+        relatedEntityType: calendarEvent.relatedEntityType,
+        relatedEntityId: calendarEvent.relatedEntityId
+      });
+    } else {
+      setEditingCalendarId(null);
+      setCalendarForm({
+        ...defaultCalendarForm(),
+        title: project ? `${project.name} project meeting` : "",
+        attendees: client?.email ? [{ name: client.contactName, email: client.email }] : []
+      });
+    }
+    setReviewMode(null);
+    setScheduleOpen(true);
+  }
+
+  async function confirmSendEmail() {
+    setWorking(true);
+    setError("");
+    try {
+      const draft = await createProjectCommunication(selectedProjectId, emailForm);
+      const result = await sendProjectCommunication(selectedProjectId, draft.id);
+      setCommunications((current) => [result.communication, ...current.filter((item) => item.id !== result.communication.id)]);
+      setNotice("Accepted by Microsoft 365 for delivery. This does not prove final recipient delivery.");
+      setComposeOpen(false);
+      setReviewMode(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Project email could not be sent.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function confirmCalendar() {
+    setWorking(true);
+    setError("");
+    try {
+      const saved = editingCalendarId
+        ? await updateProjectCalendarEvent(selectedProjectId, editingCalendarId, calendarForm)
+        : await createProjectCalendarEvent(selectedProjectId, (await createProjectCalendarDraft(selectedProjectId, calendarForm)).id);
+      setCalendarEvents((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setNotice(saved.status === "scheduled" ? "Outlook calendar event scheduled. Attendees receive invitations when included." : "Calendar event updated.");
+      setScheduleOpen(false);
+      setReviewMode(null);
+      setEditingCalendarId(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Calendar event could not be saved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function cancelEvent(calendarEvent: ProjectCalendarEvent) {
+    if (!window.confirm("Cancel this Outlook calendar event? The local audit record will be retained.")) {
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    try {
+      const canceled = await cancelProjectCalendarEvent(selectedProjectId, calendarEvent.id);
+      setCalendarEvents((current) => current.map((item) => item.id === canceled.id ? canceled : item));
+      setNotice("Outlook calendar event canceled and the local audit record was retained.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Calendar event could not be canceled.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const filteredCommunications = activeTab === "all" || activeTab === "email" ? communications : [];
+  const filteredCalendarEvents = activeTab === "all" || activeTab === "calendar" ? calendarEvents : [];
+  const showActivity = activeTab === "all" || activeTab === "activity";
 
   return (
-    <section className="panel">
+    <section className="panel messages-workspace">
       <div className="panel-header">
         <div>
           <h1>Messages</h1>
-          <p>Project communication history and activity updates.</p>
+          <p>Project communications, Outlook calendar links, and activity history.</p>
         </div>
-        {canViewInternal ? (
-          <button className="secondary-button" type="button" disabled title="Direct project messaging is planned for a later phase.">
-            <Mail size={18} aria-hidden="true" />
-            Send Project Update
-          </button>
-        ) : null}
+        {canManageCommunications ? (
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={() => openSchedule()}>
+              <CalendarDays size={18} aria-hidden="true" />
+              Schedule Event
+            </button>
+            <button className="action-button" type="button" onClick={openCompose}>
+              <Mail size={18} aria-hidden="true" />
+              Compose Email
+            </button>
+          </div>
+        ) : (
+          <p className="panel-note">You can view permitted project history, but only project managers and administrators can send email or manage Outlook events.</p>
+        )}
       </div>
-      <ActivityFeed events={events} users={projectState.users} clientPreview={clientPreview} />
+
+      {notice ? <p className="form-success" role="status">{notice}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+
+      <div className="segmented-control" role="tablist" aria-label="Message workspace filters">
+        {(["all", "email", "calendar", "activity"] as MessageTab[]).map((tab) => (
+          <button key={tab} type="button" className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
+            {tab[0].toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {(filteredCommunications.length > 0 || filteredCalendarEvents.length > 0) ? (
+        <div className="communication-list">
+          {filteredCommunications.map((communication) => (
+            <article className="communication-row" key={communication.id}>
+              <Mail size={18} aria-hidden="true" />
+              <div>
+                <strong>{communication.subject}</strong>
+                <span>{communication.toRecipients.length} To · {communication.visibility.replace("_", " ")} · {communication.createdBy}</span>
+                {communication.status === "unknown" ? <em>Prior send status is unknown. Manual retry may duplicate delivery.</em> : null}
+              </div>
+              <StatusBadge label={statusLabel(communication.status)} tone={statusTone(communication.status)} />
+            </article>
+          ))}
+          {filteredCalendarEvents.map((calendarEvent) => (
+            <article className="communication-row" key={calendarEvent.id}>
+              <CalendarDays size={18} aria-hidden="true" />
+              <div>
+                <strong>{calendarEvent.title}</strong>
+                <span>{formatDate(calendarEvent.startDateTime)} · {calendarEvent.attendees.length} attendees · {calendarEvent.visibility.replace("_", " ")}</span>
+              </div>
+              <div className="button-row">
+                <StatusBadge label={statusLabel(calendarEvent.status)} tone={statusTone(calendarEvent.status)} />
+                {calendarEvent.graphWebLink ? (
+                  <button className="icon-button" type="button" onClick={() => window.open(calendarEvent.graphWebLink || "", "_blank", "noopener,noreferrer")} aria-label={`Open ${calendarEvent.title} in Outlook`}>
+                    <ExternalLink size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
+                {canManageCommunications && calendarEvent.status !== "canceled" ? (
+                  <>
+                    <button className="secondary-button compact-button" type="button" onClick={() => openSchedule(calendarEvent)}>Edit</button>
+                    <button className="secondary-button compact-button" type="button" onClick={() => cancelEvent(calendarEvent)} disabled={working}>Cancel</button>
+                  </>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : activeTab !== "activity" ? (
+        <div className="empty-state">
+          <h2>No project communications yet.</h2>
+          <p>Emails and Outlook events created through AccelProjects will appear here.</p>
+        </div>
+      ) : null}
+
+      {showActivity ? <ActivityFeed events={events} users={projectState.users} clientPreview={clientPreview} /> : null}
+
+      {composeOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setComposeOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="compose-email-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="compose-email-heading">{reviewMode === "email" ? "Review Email" : "Compose Email"}</h2>
+              <button className="icon-button" type="button" aria-label="Close compose email" onClick={() => setComposeOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            {reviewMode === "email" ? (
+              <div className="review-stack">
+                <p><strong>To:</strong> {recipientText(emailForm.toRecipients)}</p>
+                <p><strong>CC:</strong> {recipientText(emailForm.ccRecipients) || "None"}</p>
+                <p><strong>BCC:</strong> {emailForm.bccRecipients.length} hidden recipients</p>
+                <p><strong>Subject:</strong> {emailForm.subject}</p>
+                <pre>{emailForm.bodyText}</pre>
+                <p className="panel-note">Microsoft Graph returns Accepted when Microsoft 365 accepts the request. This is not final delivery confirmation.</p>
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setReviewMode(null)} disabled={working}>Back</button>
+                  <button className="action-button" type="button" onClick={confirmSendEmail} disabled={working}>{working ? "Sending..." : "Confirm Send"}</button>
+                </div>
+              </div>
+            ) : (
+              <form className="settings-form" onSubmit={(event) => { event.preventDefault(); setReviewMode("email"); }}>
+                <label>To<input value={recipientText(emailForm.toRecipients)} onChange={(event) => setEmailForm({ ...emailForm, toRecipients: parseRecipientText(event.target.value) })} required /></label>
+                <label>CC<input value={recipientText(emailForm.ccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, ccRecipients: parseRecipientText(event.target.value) })} /></label>
+                <label>BCC<input value={recipientText(emailForm.bccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, bccRecipients: parseRecipientText(event.target.value) })} /></label>
+                <label>Subject<input value={emailForm.subject} onChange={(event) => setEmailForm({ ...emailForm, subject: event.target.value })} required /></label>
+                <label>Message<textarea value={emailForm.bodyText} onChange={(event) => setEmailForm({ ...emailForm, bodyText: event.target.value })} required rows={8} /></label>
+                <div className="form-grid two">
+                  <label>Audience<select value={emailForm.audience} onChange={(event) => setEmailForm({ ...emailForm, audience: event.target.value as ProjectCommunicationInput["audience"] })}><option value="client">Client</option><option value="internal">Internal</option><option value="mixed">Mixed</option></select></label>
+                  <label>Visibility<select value={emailForm.visibility} onChange={(event) => setEmailForm({ ...emailForm, visibility: event.target.value as ProjectCommunicationInput["visibility"] })}><option value="internal">Internal</option><option value="client_visible">Client visible later</option></select></label>
+                </div>
+                <button className="action-button" type="submit">Review Email</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
+
+      {scheduleOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setScheduleOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-event-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="schedule-event-heading">{reviewMode === "calendar" ? "Review Event" : editingCalendarId ? "Edit Event" : "Schedule Event"}</h2>
+              <button className="icon-button" type="button" aria-label="Close schedule event" onClick={() => setScheduleOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            {reviewMode === "calendar" ? (
+              <div className="review-stack">
+                <p><strong>Title:</strong> {calendarForm.title}</p>
+                <p><strong>When:</strong> {calendarForm.startDateTime} to {calendarForm.endDateTime} ({calendarForm.timeZone})</p>
+                <p><strong>Attendees:</strong> {recipientText(calendarForm.attendees) || "None"}</p>
+                {calendarForm.attendees.length > 0 ? <p className="form-warning">Outlook will send invitations to attendees after confirmation.</p> : null}
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setReviewMode(null)} disabled={working}>Back</button>
+                  <button className="action-button" type="button" onClick={confirmCalendar} disabled={working}>{working ? "Saving..." : editingCalendarId ? "Confirm Update" : "Confirm Schedule"}</button>
+                </div>
+              </div>
+            ) : (
+              <form className="settings-form" onSubmit={(event) => { event.preventDefault(); setReviewMode("calendar"); }}>
+                <label>Title<input value={calendarForm.title} onChange={(event) => setCalendarForm({ ...calendarForm, title: event.target.value })} required /></label>
+                <label>Description<textarea value={calendarForm.descriptionText} onChange={(event) => setCalendarForm({ ...calendarForm, descriptionText: event.target.value })} rows={4} /></label>
+                <div className="form-grid two">
+                  <label>Start<input type="datetime-local" value={calendarForm.startDateTime} onChange={(event) => setCalendarForm({ ...calendarForm, startDateTime: event.target.value })} required /></label>
+                  <label>End<input type="datetime-local" value={calendarForm.endDateTime} onChange={(event) => setCalendarForm({ ...calendarForm, endDateTime: event.target.value })} required /></label>
+                </div>
+                <div className="form-grid two">
+                  <label>Time zone<input value={calendarForm.timeZone} onChange={(event) => setCalendarForm({ ...calendarForm, timeZone: event.target.value })} /></label>
+                  <label>Reminder minutes<input type="number" min={0} value={calendarForm.reminderMinutesBeforeStart} onChange={(event) => setCalendarForm({ ...calendarForm, reminderMinutesBeforeStart: Number(event.target.value) })} /></label>
+                </div>
+                <label>Location<input value={calendarForm.location} onChange={(event) => setCalendarForm({ ...calendarForm, location: event.target.value })} /></label>
+                <label>Attendees<input value={recipientText(calendarForm.attendees)} onChange={(event) => setCalendarForm({ ...calendarForm, attendees: parseRecipientText(event.target.value) })} /></label>
+                <div className="form-grid two">
+                  <label>Related item<select value={`${calendarForm.relatedEntityType}:${calendarForm.relatedEntityId || ""}`} onChange={(event) => {
+                    const [type, id] = event.target.value.split(":");
+                    setCalendarForm({ ...calendarForm, relatedEntityType: type as ProjectCalendarEventInput["relatedEntityType"], relatedEntityId: id || null });
+                  }}>
+                    <option value="project:">Project</option>
+                    {tasks.map((task) => <option key={task.id} value={`task:${task.id}`}>Task: {task.title}</option>)}
+                    {milestones.map((milestone) => <option key={milestone.id} value={`milestone:${milestone.id}`}>Milestone: {milestone.name}</option>)}
+                  </select></label>
+                  <label>Visibility<select value={calendarForm.visibility} onChange={(event) => setCalendarForm({ ...calendarForm, visibility: event.target.value as ProjectCalendarEventInput["visibility"] })}><option value="internal">Internal</option><option value="client_visible">Client visible later</option></select></label>
+                </div>
+                <label className="checkbox-label"><input type="checkbox" checked={calendarForm.isAllDay} onChange={(event) => setCalendarForm({ ...calendarForm, isAllDay: event.target.checked })} /> All-day event</label>
+                <button className="action-button" type="submit">Review Event</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

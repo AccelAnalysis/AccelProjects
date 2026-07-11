@@ -3,11 +3,22 @@ import "dotenv/config";
 import Stripe from "stripe";
 import { createFirebaseAuthMiddleware, requireRoles } from "./apiAuth.js";
 import { orderReceivedTemplate } from "./emailTemplates.js";
+import { getMicrosoftProjectConfig } from "./microsoftGraphService.js";
 import { sendMicrosoftEmail } from "./microsoftGraphEmailService.js";
 import { getMicrosoftGraphAccessToken } from "./microsoftGraphAuthService.js";
 import { validateMicrosoftEmailConfig } from "./microsoftEmailConfig.js";
 import { sendEmail } from "./mockEmailService.js";
 import { sendSms } from "./mockSmsService.js";
+import { requireProjectAccess } from "./projectAuthorization.js";
+import {
+  cancelCalendarEvent,
+  createCalendarDraft,
+  createCalendarEvent,
+  createCommunicationDraft,
+  listProjectCommunicationWorkspace,
+  sendCommunication,
+  updateCalendarEvent
+} from "./projectCommunicationService.js";
 import { orderReceivedSmsTemplate } from "./smsTemplates.js";
 import { validateTwilioSmsConfig } from "./twilioSmsConfig.js";
 import { sendTwilioSms } from "./twilioSmsService.js";
@@ -34,6 +45,9 @@ const app = express();
 const port = process.env.API_PORT || 5174;
 const requireFirebaseAuth = createFirebaseAuthMiddleware();
 const requireAdmin = requireRoles(["admin"]);
+const requireProjectRead = requireProjectAccess("read");
+const requireProjectCommunication = requireProjectAccess("communication");
+const requireProjectCalendar = requireProjectAccess("calendar");
 
 function getStripeClient() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -251,6 +265,30 @@ app.get("/api/email/microsoft-token-check", requireFirebaseAuth, requireAdmin, a
   }
 });
 
+app.get("/api/integrations/microsoft/capabilities", requireFirebaseAuth, requireAdmin, async (_request, response) => {
+  const config = getMicrosoftProjectConfig();
+  let tokenAvailable = false;
+
+  try {
+    await getMicrosoftGraphAccessToken();
+    tokenAvailable = true;
+  } catch {
+    tokenAvailable = false;
+  }
+
+  response.json({
+    emailConfigured: config.configured,
+    calendarConfigured: config.calendarConfigured,
+    tokenAvailable,
+    mailSendPermissionExpected: true,
+    calendarsReadWritePermissionExpected: true,
+    senderMailbox: config.senderMailbox,
+    calendarOwnerMailbox: config.calendarOwnerEmail,
+    missing: config.missing,
+    authMode: "app_only_client_credentials"
+  });
+});
+
 app.get("/api/sms/twilio-config-check", requireFirebaseAuth, requireAdmin, (_request, response) => {
   response.json(validateTwilioSmsConfig());
 });
@@ -260,6 +298,71 @@ app.get("/api/payments/stripe-config-check", requireFirebaseAuth, requireAdmin, 
 });
 
 app.use("/api", requireFirebaseAuth);
+
+app.get("/api/projects/:projectId/communications-workspace", requireProjectRead, async (request, response) => {
+  const workspace = await listProjectCommunicationWorkspace(request.params.projectId);
+  response.json(workspace);
+});
+
+app.post("/api/projects/:projectId/communications", requireProjectCommunication, async (request, response) => {
+  try {
+    const communication = await createCommunicationDraft(request.params.projectId, request.auth, request.body);
+    response.status(201).json(communication);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Communication draft could not be created" });
+  }
+});
+
+app.post("/api/projects/:projectId/communications/:communicationId/send", requireProjectCommunication, async (request, response) => {
+  try {
+    const result = await sendCommunication(request.params.projectId, request.params.communicationId, request.auth, {
+      retryUnknown: Boolean(request.body?.retryUnknownConfirmed)
+    });
+    response.status(200).json(result);
+  } catch (error) {
+    response.status(error.status || 400).json({
+      success: false,
+      error: error.message || "Project email could not be sent",
+      code: error.code || "send_failed"
+    });
+  }
+});
+
+app.post("/api/projects/:projectId/calendar-events", requireProjectCalendar, async (request, response) => {
+  try {
+    const calendarEvent = await createCalendarDraft(request.params.projectId, request.auth, request.body);
+    response.status(201).json(calendarEvent);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Calendar draft could not be created" });
+  }
+});
+
+app.post("/api/projects/:projectId/calendar-events/:calendarEventId/create", requireProjectCalendar, async (request, response) => {
+  try {
+    const calendarEvent = await createCalendarEvent(request.params.projectId, request.params.calendarEventId, request.auth);
+    response.status(200).json(calendarEvent);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Calendar event could not be scheduled", code: error.code || "calendar_create_failed" });
+  }
+});
+
+app.patch("/api/projects/:projectId/calendar-events/:calendarEventId", requireProjectCalendar, async (request, response) => {
+  try {
+    const calendarEvent = await updateCalendarEvent(request.params.projectId, request.params.calendarEventId, request.auth, request.body);
+    response.status(200).json(calendarEvent);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Calendar event could not be updated", code: error.code || "calendar_update_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/calendar-events/:calendarEventId/cancel", requireProjectCalendar, async (request, response) => {
+  try {
+    const calendarEvent = await cancelCalendarEvent(request.params.projectId, request.params.calendarEventId, request.auth);
+    response.status(200).json(calendarEvent);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Calendar event could not be canceled", code: error.code || "calendar_cancel_failed" });
+  }
+});
 
 app.post("/api/orders", async (request, response) => {
   const missingFields = requireFields(request.body, ["customerName", "email", "phone", "service", "amount"]);

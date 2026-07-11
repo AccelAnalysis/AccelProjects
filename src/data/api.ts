@@ -9,6 +9,9 @@ import type {
   OrderStatus,
   PaymentLog,
   PaymentLogInput,
+  ProjectCalendarEvent,
+  ProjectCommunication,
+  ProjectRecipient,
   SmsLog,
   SmsLogInput,
   SmsPreview
@@ -80,6 +83,97 @@ export function checkMicrosoftToken() {
     message?: string;
     error?: string;
   }>("/api/email/microsoft-token-check");
+}
+
+export function checkMicrosoftProjectCapabilities() {
+  return request<{
+    emailConfigured: boolean;
+    calendarConfigured: boolean;
+    tokenAvailable: boolean;
+    mailSendPermissionExpected: boolean;
+    calendarsReadWritePermissionExpected: boolean;
+    senderMailbox: string;
+    calendarOwnerMailbox: string;
+    missing: string[];
+    authMode: string;
+  }>("/api/integrations/microsoft/capabilities");
+}
+
+export function getProjectCommunicationsWorkspace(projectId: string) {
+  return request<{
+    communications: ProjectCommunication[];
+    calendarEvents: ProjectCalendarEvent[];
+  }>(`/api/projects/${projectId}/communications-workspace`);
+}
+
+export type ProjectCommunicationInput = {
+  subject: string;
+  bodyText: string;
+  toRecipients: ProjectRecipient[];
+  ccRecipients: ProjectRecipient[];
+  bccRecipients: ProjectRecipient[];
+  audience: "client" | "internal" | "mixed";
+  visibility: "internal" | "client_visible";
+  sourceType?: "manual_project_update" | "report_snapshot";
+  sourceId?: string | null;
+  attachmentRefs?: Array<Record<string, unknown>>;
+};
+
+export function createProjectCommunication(projectId: string, input: ProjectCommunicationInput) {
+  return request<ProjectCommunication>(`/api/projects/${projectId}/communications`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function sendProjectCommunication(projectId: string, communicationId: string, options: { retryUnknownConfirmed?: boolean } = {}) {
+  return request<{
+    communication: ProjectCommunication;
+  }>(`/api/projects/${projectId}/communications/${communicationId}/send`, {
+    method: "POST",
+    body: JSON.stringify(options)
+  });
+}
+
+export type ProjectCalendarEventInput = {
+  title: string;
+  descriptionText: string;
+  visibility: "internal" | "client_visible";
+  startDateTime: string;
+  endDateTime: string;
+  timeZone?: string;
+  isAllDay: boolean;
+  location: string;
+  attendees: ProjectRecipient[];
+  reminderMinutesBeforeStart: number;
+  relatedEntityType: "project" | "task" | "milestone" | "report" | "other";
+  relatedEntityId: string | null;
+};
+
+export function createProjectCalendarDraft(projectId: string, input: ProjectCalendarEventInput) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function createProjectCalendarEvent(projectId: string, calendarEventId: string) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}/create`, {
+    method: "POST"
+  });
+}
+
+export function updateProjectCalendarEvent(projectId: string, calendarEventId: string, input: ProjectCalendarEventInput) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function cancelProjectCalendarEvent(projectId: string, calendarEventId: string) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}/cancel`, {
+    method: "POST"
+  });
 }
 
 export function checkStripeConfig() {

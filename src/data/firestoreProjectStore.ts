@@ -31,6 +31,8 @@ import type {
   Phase,
   Project,
   ProjectActivityEvent,
+  ProjectCalendarEvent,
+  ProjectCommunication,
   ProjectDocument,
   ProjectExportSnapshot,
   ProjectMember,
@@ -48,7 +50,7 @@ import type {
 export const FIRESTORE_ORGANIZATION_ID = "org_accel_projects";
 
 type CollectionKey = keyof ProjectState;
-type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
+type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectCommunications" | "projectCalendarEvents" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
 type FirestorePath = [string, ...string[]];
 
 const rootCollectionMap = {
@@ -67,6 +69,8 @@ const projectCollectionMap = {
   documents: "documents",
   metrics: "metrics",
   activityEvents: "activityEvents",
+  projectCommunications: "communications",
+  projectCalendarEvents: "calendarEvents",
   projectVersions: "versions",
   projectExportSnapshots: "exportSnapshots",
   projectUpdateManifests: "updateManifests"
@@ -393,6 +397,8 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
       documents: [],
       metrics: [],
       activityEvents: [],
+      projectCommunications: [],
+      projectCalendarEvents: [],
       projectVersions: []
     };
   }
@@ -411,6 +417,8 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     documents,
     metrics,
     activityEvents,
+    projectCommunications,
+    projectCalendarEvents,
     projectVersions,
     taskCommentsByProject
   ] = await Promise.all([
@@ -423,6 +431,8 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     readProjectCollections<ProjectDocument>(projects, projectCollectionMap.documents),
     readProjectCollections<ProjectMetric>(projects, projectCollectionMap.metrics),
     readProjectCollections<ProjectActivityEvent>(projects, projectCollectionMap.activityEvents),
+    readProjectCollections<ProjectCommunication>(projects, projectCollectionMap.projectCommunications),
+    readProjectCollections<ProjectCalendarEvent>(projects, projectCollectionMap.projectCalendarEvents),
     readProjectCollections<ProjectVersion>(projects, projectCollectionMap.projectVersions),
     Promise.all(projects.map(async (project) => {
       const projectTasks = await readCollection<Task>([...projectPath(project.id), projectCollectionMap.tasks]);
@@ -448,6 +458,8 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     documents,
     metrics,
     activityEvents,
+    projectCommunications,
+    projectCalendarEvents,
     projectVersions
   };
 }
@@ -525,6 +537,8 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
   writeProjectScoped(initialState.documents, "documents");
   writeProjectScoped(initialState.metrics, "metrics");
   writeProjectScoped(initialState.activityEvents, "activityEvents");
+  writeProjectScoped(initialState.projectCommunications, "projectCommunications");
+  writeProjectScoped(initialState.projectCalendarEvents, "projectCalendarEvents");
   writeProjectScoped(initialState.projectVersions, "projectVersions");
 
   initialState.taskComments.forEach((comment) => {

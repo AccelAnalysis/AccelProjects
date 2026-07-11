@@ -5,12 +5,14 @@ AccelProjects is a Firebase-backed internal project-management workspace. The or
 ## Production-Capable Surfaces
 
 - Firebase Authentication sign-in and sign-out.
-- Firestore-backed organization users, clients, projects, members, phases, milestones, tasks, dependencies, risks, documents, metrics, activity, versions, export snapshots, update manifests, and import manifests.
+- Firestore-backed organization users, clients, projects, members, phases, milestones, tasks, dependencies, risks, documents, metrics, activity, project communications, delivery attempts, calendar events, versions, export snapshots, update manifests, and import manifests.
 - Project creation through validated AccelProjects Project Package imports.
 - Existing-project updates through verified project export files.
 - Project exports and immutable revision records.
 - Task, schedule, milestone, dependency, risk, document, metric, and comment persistence through the established Firestore data layer.
 - Account settings for profile display name, avatar initials, read-only account metadata, access summary, password reset, and persisted notification preferences.
+- Manual project email composition with explicit confirmation, Microsoft Graph server-side sending, accepted/failed/unknown status recording, immutable delivery attempts, and project activity audit entries.
+- Manual Outlook calendar event creation, update, open-in-Outlook, and cancel flows associated with projects.
 - Backend API authentication for application-data and provider-status routes using Firebase ID tokens.
 - CI quality gate for type-checking, unit/component/backend tests, Firestore rules tests, production build, and committed-file guard.
 
@@ -19,7 +21,10 @@ AccelProjects is a Firebase-backed internal project-management workspace. The or
 - Client portal data loading is not implemented. Production client-role users are not granted internal project access.
 - Role Preview and Client-Safe Preview are development/test-only UI aids, not authorization.
 - Notification preferences are stored, but automatic notification/email delivery is not active yet.
-- Project email workflow is not connected yet.
+- Microsoft Graph `202 Accepted` is recorded as accepted by Microsoft 365 for delivery, not delivered/read/received by the recipient.
+- Client-visible communication and calendar classifications are stored for future portal work, but client-role users still cannot access internal project communications or calendar records.
+- Report snapshot source fields and attachment references are reserved for Run 3. Non-empty attachment submissions are rejected in Run 2.
+- Recurring meetings and Teams meeting generation are not implemented.
 - Dependency-aware schedule recalculation is not implemented; dependencies are validated and rendered, but the Gantt does not run a scheduling engine.
 - Billing, Microsoft Graph email, Twilio SMS, Stripe checkout, and integration test tooling remain available for compatibility and development workflows, but test/demo controls are hidden from normal production navigation.
 - Historical revision restore/rollback is not implemented.
@@ -35,15 +40,16 @@ organizations/org_accel_projects/users/{uid}
 The real role in that document controls application permissions and Firestore access. The current roles are `admin`, `project_manager`, `contributor`, `viewer`, and `client`.
 
 - Admins can access all organization projects and manage supported user roles.
-- Project managers can read projects they own or projects where they are explicit members. They can manage schedules for owned or lead-member projects.
+- Project managers can read projects they own or projects where they are explicit members. They can manage schedules, project communications, and Outlook calendar events for owned or lead-member projects.
 - Contributors and viewers can read only projects where they are explicit members.
+- Contributors and viewers can read permitted internal communication/calendar history, but cannot send external project email or manage Outlook events.
 - Contributors can update only allowed fields on their assigned tasks.
 - Clients are blocked from the internal project workspace until a client-specific portal/data path exists.
 - Self-service profile updates can change only display name, avatar initials, notification preferences, and updated timestamp.
 - Users cannot self-promote, change organization identity, edit another user, delete another user, or alter protected profile fields.
 - Organization document updates are admin-only and limited to supported fields.
 
-Project membership documents are written with the user ID as the Firestore document ID for rule-checkable membership lookups. Legacy member documents whose document IDs are not user IDs should be backfilled before relying on strict member-scoped access for those records.
+Project membership documents are written with the user ID as the Firestore document ID for rule-checkable membership lookups. Legacy member documents whose document IDs are not user IDs should be audited and backfilled before relying on strict member-scoped access for those records.
 
 ## Development Preview And Tool Guards
 
@@ -79,6 +85,24 @@ VITE_ENABLE_DEVELOPMENT_TOOLS=false
 ```
 
 Provider variables for Microsoft Graph, Twilio, and Stripe are also listed in `.env.example`. Do not commit real provider secrets.
+
+Microsoft Graph project email and calendar require application permissions approved by an Entra administrator:
+
+- `Mail.Send`
+- `Calendars.ReadWrite`
+
+The server uses app-only client credentials and restricts send/calendar mailbox use with:
+
+```bash
+MICROSOFT_SENDER_EMAIL=
+MICROSOFT_CALENDAR_OWNER_EMAIL=
+MICROSOFT_ALLOWED_MAILBOXES=
+MICROSOFT_DEFAULT_TIME_ZONE=Eastern Standard Time
+```
+
+`MICROSOFT_CALENDAR_OWNER_EMAIL` defaults to the sender mailbox when omitted. Browser requests cannot choose arbitrary sender or calendar mailboxes. Admin capability checks return safe booleans and configured mailbox names only; they do not expose tenant secrets, client secrets, access tokens, token claims, or raw Graph errors.
+
+Optional live Microsoft tests must be explicitly enabled with `MICROSOFT_ENABLE_LIVE_INTEGRATION_TESTS=true` and must use approved test mailboxes/recipients only. Standard tests mock Graph and must not send real email or invitations.
 
 The backend Firebase Admin SDK verifies bearer ID tokens. Local development can use the project ID from `FIREBASE_PROJECT_ID`, `GCLOUD_PROJECT`, or `VITE_FIREBASE_PROJECT_ID`.
 
@@ -155,6 +179,15 @@ The server verifies the Firebase ID token, loads the organization-user profile, 
 
 Microsoft Graph, Twilio, and Stripe configuration-check routes are admin-only and return non-sensitive status fields. They do not expose secrets, token values, or full credentials.
 
+Project communication and calendar API routes additionally verify real project access on the server:
+
+- Admins may manage all organization project communications and calendar events.
+- Project managers may manage only projects they own or where they are an explicit lead member.
+- Contributors and viewers may read permitted internal history but cannot send or manage.
+- Client-role users are blocked from internal project communication and calendar APIs.
+
+Email and calendar side effects require explicit confirmation. An ambiguous email timeout is stored as `unknown`; automatic retry is intentionally avoided because Microsoft may have already accepted the request. Manual retry after `unknown` must acknowledge duplicate-delivery risk. Calendar creates reuse a stored `transactionId` so deliberate retries are less likely to create duplicate Outlook events.
+
 The frontend API client automatically includes the current Firebase ID token when a user is signed in and surfaces 401/403 responses as session/authorization errors.
 
 ## Account Settings
@@ -167,6 +200,22 @@ The profile menu routes to distinct settings surfaces:
 - `/settings/notifications`: persist task assignment, due date, risk, project-message, and email-delivery preferences.
 
 Notification preferences are saved now. Automatic delivery is deferred.
+
+## Project Communications And Calendar
+
+The Messages workspace stores project-scoped records under:
+
+```text
+organizations/{organizationId}/projects/{projectId}/communications/{communicationId}
+organizations/{organizationId}/projects/{projectId}/communications/{communicationId}/deliveryAttempts/{attemptId}
+organizations/{organizationId}/projects/{projectId}/calendarEvents/{calendarEventId}
+```
+
+Communication records support manual project-update email now and reserve `report_snapshot` plus attachment references for Run 3. Delivery attempts are immutable and contain status, HTTP status, safe error classification, and a request hash, but never access tokens, client secrets, full Graph responses, raw token payloads, or full message bodies.
+
+Calendar records store local audit state, configured calendar owner, Outlook Graph event ID, iCalUId, web link, change key, and last sync fields. Cancelation preserves the local record. Linked tasks or milestones do not automatically update Outlook; users must deliberately sync/edit the event.
+
+When attendees are included, Outlook sends invitations after confirmation.
 
 ## Project Imports
 
@@ -200,8 +249,11 @@ Safety limits:
 
 ## Current Next Work
 
-- Build a secure client portal/data path instead of exposing internal workspace data to client-role users.
-- Connect project messages to Microsoft Graph email delivery.
+- Run 3: client progress reports, print/PDF output, immutable report snapshots, approval, and approved PDF attachment delivery through the communication service.
+- Run 4: secure read-only client portal and approved report visibility using explicit server and Firestore authorization.
+- Run 5: client comments, approvals, decisions, change requests, notifications, and document exchange.
 - Add automatic notification delivery using the persisted preferences.
 - Add dependency-aware schedule recalculation when the scheduling model is ready.
 - Design restore/rollback workflows for historical revisions.
+
+Firestore rules for the Operational Readiness Gate 1 model have been deployed to the live Firebase project. Deploy updated rules again before live-testing the Run 2 communication/calendar collections.

@@ -103,6 +103,10 @@ service cloud.firestore {
       return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId) || isProjectLeadManager(organizationId, projectId);
     }
 
+    function canManageProjectCommunications(organizationId, projectId) {
+      return canManageProjectSchedule(organizationId, projectId);
+    }
+
     function canWriteProjectRevisionFields(organizationId, projectId) {
       return (canManageProjectSchedule(organizationId, projectId) || (isContributorRole(organizationId) && canReadProject(organizationId, projectId)))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -264,6 +268,135 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
     }
 
+    function validRecipientList(recipients) {
+      return recipients is list
+        && recipients.size() <= 100;
+    }
+
+    function validCommunicationDraft(organizationId, projectId, communicationId) {
+      return request.resource.data.id == communicationId
+        && request.resource.data.organizationId == organizationId
+        && request.resource.data.projectId == projectId
+        && request.resource.data.channel == "email"
+        && request.resource.data.direction == "outbound"
+        && request.resource.data.audience in ["client", "internal", "mixed"]
+        && request.resource.data.visibility in ["internal", "client_visible"]
+        && request.resource.data.status == "draft"
+        && request.resource.data.subject is string
+        && request.resource.data.bodyText is string
+        && validRecipientList(request.resource.data.toRecipients)
+        && validRecipientList(request.resource.data.ccRecipients)
+        && validRecipientList(request.resource.data.bccRecipients)
+        && request.resource.data.provider == "microsoft_graph"
+        && request.resource.data.sourceType in ["manual_project_update", "report_snapshot"]
+        && request.resource.data.attachmentRefs is list
+        && request.resource.data.attachmentRefs.size() == 0
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.sendRequestedAt == null
+        && request.resource.data.acceptedAt == null
+        && request.resource.data.failedAt == null
+        && request.resource.data.lastErrorCode == null
+        && request.resource.data.lastErrorMessage == null;
+    }
+
+    function safeCommunicationDraftUpdate() {
+      return resource.data.status == "draft"
+        && request.resource.data.status == "draft"
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.provider == resource.data.provider
+        && request.resource.data.senderMailbox == resource.data.senderMailbox
+        && request.resource.data.sendRequestedAt == null
+        && request.resource.data.acceptedAt == null
+        && request.resource.data.failedAt == null
+        && request.resource.data.lastErrorCode == null
+        && request.resource.data.lastErrorMessage == null
+        && request.resource.data.attachmentRefs is list
+        && request.resource.data.attachmentRefs.size() == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "audience",
+          "visibility",
+          "subject",
+          "bodyText",
+          "toRecipients",
+          "ccRecipients",
+          "bccRecipients",
+          "sourceType",
+          "sourceId",
+          "idempotencyKey",
+          "updatedBy",
+          "updatedAt"
+        ]);
+    }
+
+    function validCalendarDraft(organizationId, projectId, calendarEventId) {
+      return request.resource.data.id == calendarEventId
+        && request.resource.data.organizationId == organizationId
+        && request.resource.data.projectId == projectId
+        && request.resource.data.title is string
+        && request.resource.data.descriptionText is string
+        && request.resource.data.visibility in ["internal", "client_visible"]
+        && request.resource.data.status == "draft"
+        && request.resource.data.calendarOwnerEmail is string
+        && request.resource.data.startDateTime is string
+        && request.resource.data.endDateTime is string
+        && request.resource.data.timeZone is string
+        && request.resource.data.isAllDay is bool
+        && request.resource.data.location is string
+        && validRecipientList(request.resource.data.attendees)
+        && request.resource.data.reminderMinutesBeforeStart is number
+        && request.resource.data.relatedEntityType in ["project", "task", "milestone", "report", "other"]
+        && request.resource.data.transactionId is string
+        && request.resource.data.graphEventId == null
+        && request.resource.data.graphICalUId == null
+        && request.resource.data.graphWebLink == null
+        && request.resource.data.graphChangeKey == null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.lastSyncedAt == null
+        && request.resource.data.lastErrorCode == null
+        && request.resource.data.lastErrorMessage == null;
+    }
+
+    function safeCalendarDraftUpdate() {
+      return resource.data.status == "draft"
+        && request.resource.data.status == "draft"
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.calendarOwnerEmail == resource.data.calendarOwnerEmail
+        && request.resource.data.graphEventId == null
+        && request.resource.data.graphICalUId == null
+        && request.resource.data.graphWebLink == null
+        && request.resource.data.graphChangeKey == null
+        && request.resource.data.lastSyncedAt == null
+        && request.resource.data.lastErrorCode == null
+        && request.resource.data.lastErrorMessage == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "title",
+          "descriptionText",
+          "visibility",
+          "startDateTime",
+          "endDateTime",
+          "timeZone",
+          "isAllDay",
+          "location",
+          "attendees",
+          "reminderMinutesBeforeStart",
+          "relatedEntityType",
+          "relatedEntityId",
+          "transactionId",
+          "updatedBy",
+          "updatedAt"
+        ]);
+    }
+
     match /organizations/{organizationId} {
       allow create: if isSignedIn() && isAccelOrg(organizationId) && validOrganizationShape(organizationId);
       allow get: if isSignedIn() && isAccelOrg(organizationId);
@@ -363,6 +496,29 @@ service cloud.firestore {
           allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if false;
+        }
+
+        match /communications/{communicationId} {
+          allow read: if canReadProject(organizationId, projectId);
+          allow create: if canManageProjectCommunications(organizationId, projectId)
+            && validCommunicationDraft(organizationId, projectId, communicationId);
+          allow update: if canManageProjectCommunications(organizationId, projectId)
+            && safeCommunicationDraftUpdate();
+          allow delete: if false;
+
+          match /deliveryAttempts/{attemptId} {
+            allow read: if canReadProject(organizationId, projectId);
+            allow create, update, delete: if false;
+          }
+        }
+
+        match /calendarEvents/{calendarEventId} {
+          allow read: if canReadProject(organizationId, projectId);
+          allow create: if canManageProjectCommunications(organizationId, projectId)
+            && validCalendarDraft(organizationId, projectId, calendarEventId);
+          allow update: if canManageProjectCommunications(organizationId, projectId)
+            && safeCalendarDraftUpdate();
+          allow delete: if false;
         }
 
         match /versions/{versionId} {

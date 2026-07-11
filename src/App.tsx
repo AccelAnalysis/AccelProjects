@@ -189,6 +189,8 @@ const emptyProjectState: ProjectState = {
   documents: [],
   metrics: [],
   activityEvents: [],
+  projectCommunications: [],
+  projectCalendarEvents: [],
   projectVersions: []
 };
 

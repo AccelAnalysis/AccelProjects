@@ -382,6 +382,8 @@ export const initialProjectState: ProjectState = {
       createdAt: "2026-07-09T16:10:00.000Z"
     }
   ],
+  projectCommunications: [],
+  projectCalendarEvents: [],
   projectVersions: [
     {
       id: "version_hampton_initial",

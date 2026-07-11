@@ -83,6 +83,8 @@ describe("HomePage", () => {
         documents: [],
         metrics: [],
         activityEvents: [],
+        projectCommunications: [],
+        projectCalendarEvents: [],
         projectVersions: []
       }
     });
