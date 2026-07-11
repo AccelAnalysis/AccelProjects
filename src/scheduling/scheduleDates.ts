@@ -4,21 +4,22 @@ import { addDays, daysBetween, isDateOnly } from "../utils/dateOnly";
 export type TaskScheduleState = "scheduled" | "unscheduled" | "incomplete" | "invalid";
 
 export function getTaskScheduleState(task: Pick<Task, "startDate" | "dueDate">): TaskScheduleState {
-  const hasStart = isDateOnly(task.startDate);
-  const hasDue = isDateOnly(task.dueDate);
+  const { startDate, dueDate } = task;
+  const hasStart = isDateOnly(startDate);
+  const hasDue = isDateOnly(dueDate);
 
-  if (!task.startDate && !task.dueDate) {
+  if (!startDate && !dueDate) {
     return "unscheduled";
   }
 
   if (hasStart && hasDue) {
-    return task.dueDate < task.startDate ? "invalid" : "scheduled";
+    return dueDate < startDate ? "invalid" : "scheduled";
   }
 
   return "incomplete";
 }
 
-export function isScheduledTask(task: Pick<Task, "startDate" | "dueDate">): task is Pick<Task, "startDate" | "dueDate"> & { startDate: string; dueDate: string } {
+export function isScheduledTask<T extends Pick<Task, "startDate" | "dueDate">>(task: T): task is T & { startDate: string; dueDate: string } {
   return getTaskScheduleState(task) === "scheduled";
 }
 

@@ -13,6 +13,7 @@ import type {
   SmsLogInput,
   SmsPreview
 } from "../types";
+import { auth } from "../firebase";
 
 export const services = [
   { name: "Business Consultation", amount: 25 },
@@ -22,18 +23,39 @@ export const services = [
 
 export const orderStatuses: OrderStatus[] = ["draft", "pending_payment", "paid", "failed"];
 
+async function getAuthenticatedHeaders(options?: RequestInit) {
+  const token = await auth?.currentUser?.getIdToken();
+
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options?.headers
+  };
+}
+
+function getApiErrorMessage(status: number, data: unknown) {
+  const error = typeof data === "object" && data && "error" in data ? String((data as { error?: unknown }).error) : "";
+
+  if (status === 401) {
+    return error || "Your session expired or API authentication failed. Sign in again.";
+  }
+
+  if (status === 403) {
+    return error || "Your account is not authorized for this API action.";
+  }
+
+  return error || "API request failed";
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
-    },
+    headers: await getAuthenticatedHeaders(options),
     ...options
   });
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.error ?? "API request failed");
+    throw new Error(getApiErrorMessage(response.status, data));
   }
 
   return data as T;
@@ -296,14 +318,16 @@ export function sendMicrosoftFailureTest() {
 
 async function requestWithBody<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
-    },
+    headers: await getAuthenticatedHeaders(options),
     ...options
   });
+  const data = await response.json();
 
-  return (await response.json()) as T;
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(response.status, data));
+  }
+
+  return data as T;
 }
 
 export function createSampleOrder() {

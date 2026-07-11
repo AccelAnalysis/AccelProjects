@@ -2964,6 +2964,86 @@ td span {
   outline: 0;
 }
 
+.settings-shell {
+  overflow: visible;
+}
+
+.settings-layout {
+  align-items: start;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+}
+
+.settings-tabs {
+  border-right: 1px solid var(--ap-border);
+  display: grid;
+  gap: 4px;
+  padding-right: 12px;
+}
+
+.settings-tab {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ap-radius-md);
+  color: var(--ap-text-muted);
+  display: inline-flex;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: flex-start;
+  min-height: 38px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.settings-tab:hover,
+.settings-tab:focus-visible {
+  background: var(--ap-surface-muted);
+  color: var(--ap-text);
+}
+
+.settings-tab.active {
+  background: #eaf3ff;
+  border-color: #bfdbfe;
+  color: var(--ap-accent);
+}
+
+.settings-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings-content h2 {
+  margin: 0 0 12px;
+}
+
+.settings-checklist {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 16px;
+}
+
+.settings-checklist label {
+  align-items: center;
+  background: var(--ap-surface-muted);
+  border: 1px solid var(--ap-border);
+  border-radius: var(--ap-radius-md);
+  display: flex;
+  font-weight: 800;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.form-status.success {
+  color: #047857;
+}
+
+.form-status.error {
+  color: #b91c1c;
+}
+
 .detail-panel,
 .schedule-dialog {
   top: var(--ap-header-height);
@@ -3804,6 +3884,17 @@ summary:focus-visible {
   .project-context-bar,
   .project-header-actions {
     align-items: stretch;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-tabs {
+    border-bottom: 1px solid var(--ap-border);
+    border-right: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 0 12px;
   }
 
   .project-header-actions .compact-field {

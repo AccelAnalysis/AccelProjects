@@ -54,6 +54,32 @@ describe("App shell stabilization", () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
+  it("routes profile menu settings items to distinct account destinations", async () => {
+    const onNavigate = vi.fn();
+    const user = userEvent.setup();
+    renderTopHeader({ onNavigate });
+
+    await user.click(screen.getByRole("button", { name: /Test User/ }));
+    await user.click(screen.getByRole("menuitem", { name: "View or Edit Profile" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/settings/profile");
+
+    await user.click(screen.getByRole("button", { name: /Test User/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Account Settings" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/settings/account");
+
+    await user.click(screen.getByRole("button", { name: /Test User/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Access Settings" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/settings/access");
+
+    await user.click(screen.getByRole("button", { name: /Test User/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Notification Preferences" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/settings/notifications");
+  });
+
   it("keeps project switching functional without the duplicated always-visible dropdown", async () => {
     const onProjectChange = vi.fn();
     const user = userEvent.setup();

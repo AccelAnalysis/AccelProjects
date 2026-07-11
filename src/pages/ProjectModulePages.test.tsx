@@ -2,10 +2,11 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { User as FirebaseUser } from "firebase/auth";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectPageProps } from "../App";
 import type { ProjectState, Task } from "../types";
-import { ProjectsPage } from "./ProjectModulePages";
+import { ProjectsPage, SettingsPage } from "./ProjectModulePages";
 
 afterEach(() => {
   cleanup();
@@ -31,13 +32,73 @@ describe("ProjectsPage portfolio timeline", () => {
   });
 });
 
+describe("SettingsPage", () => {
+  it("loads profile data, hides protected fields, and persists valid profile changes", async () => {
+    const onUpdateUserProfile = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(<SettingsPage {...makeProjectPageProps({ onUpdateUserProfile })} settingsTab="profile" />);
+
+    expect(screen.getByLabelText("Authenticated email")).toHaveValue("owner@example.com");
+    expect(screen.getByLabelText("Organization role")).toHaveValue("project manager");
+    expect(screen.getByLabelText("Organization role")).toHaveAttribute("readonly");
+
+    await user.clear(screen.getByLabelText("Display name"));
+    await user.type(screen.getByLabelText("Display name"), "Updated Owner");
+    await user.click(screen.getByRole("button", { name: "Save Profile" }));
+
+    expect(onUpdateUserProfile).toHaveBeenCalledWith({
+      name: "Updated Owner",
+      avatarInitials: "OO"
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Profile saved.");
+  });
+
+  it("persists notification preferences and states delivery is not active yet", async () => {
+    const onUpdateUserProfile = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(<SettingsPage {...makeProjectPageProps({ onUpdateUserProfile })} settingsTab="notifications" />);
+
+    await user.click(screen.getByLabelText("Project-message notifications"));
+    await user.click(screen.getByRole("button", { name: "Save Notification Preferences" }));
+
+    expect(onUpdateUserProfile).toHaveBeenCalledWith({
+      notificationPreferences: expect.objectContaining({
+        projectMessages: true,
+        emailDelivery: false
+      })
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Delivery is not active");
+  });
+
+  it("shows access settings from the real role rather than preview role", () => {
+    render(<SettingsPage {...makeProjectPageProps({ role: "client", profileRole: "project_manager" })} settingsTab="access" />);
+
+    expect(screen.getByText("Real role")).toBeInTheDocument();
+    expect(screen.getByText("project manager")).toBeInTheDocument();
+    expect(screen.getByText("client")).toBeInTheDocument();
+  });
+
+  it("renders account routes as functional account information", () => {
+    render(<SettingsPage {...makeProjectPageProps()} settingsTab="account" />);
+
+    expect(screen.getByRole("heading", { name: "Account" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Firebase UID")).toHaveValue("user_1");
+    expect(screen.getByRole("button", { name: "Send Password Reset" })).toBeEnabled();
+  });
+});
+
 function makeProjectPageProps(overrides: Partial<ProjectPageProps> = {}): ProjectPageProps {
   return {
     projectState,
     selectedProjectId: "project_a",
     activeProjectTab: "plan",
+    firebaseUser,
     role: "project_manager",
+    profileRole: "project_manager",
     userProfile: projectState.users[0],
+    developmentToolsEnabled: false,
     canEdit: true,
     canManage: true,
     canAddTaskComments: true,
@@ -68,6 +129,8 @@ function makeProjectPageProps(overrides: Partial<ProjectPageProps> = {}): Projec
     onProjectImported: vi.fn().mockResolvedValue(undefined),
     onProjectUpdated: vi.fn().mockResolvedValue(undefined),
     onExportProject: vi.fn().mockResolvedValue(undefined),
+    onUpdateUserProfile: vi.fn().mockResolvedValue(undefined),
+    onSendPasswordReset: vi.fn().mockResolvedValue(undefined),
     onNavigate: vi.fn(),
     onProjectChange: vi.fn(),
     onNewTask: vi.fn(),
@@ -142,11 +205,19 @@ const projectState: ProjectState = {
   projectVersions: []
 };
 
+const firebaseUser = {
+  uid: "user_1",
+  email: "owner@example.com",
+  emailVerified: true,
+  displayName: "Owner One",
+  providerData: [{ providerId: "password" }]
+} as FirebaseUser;
+
 function makeTask(overrides: Partial<Task>): Task {
   return {
     id: "task",
     projectId: "project_a",
-    phaseId: null,
+    phaseId: "phase_a",
     title: "Task",
     description: "Description",
     status: "not_started",

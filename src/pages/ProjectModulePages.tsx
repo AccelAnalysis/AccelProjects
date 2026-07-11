@@ -1,5 +1,5 @@
-import { Download, FileText, Filter, History, Mail, Plus, SlidersHorizontal, Upload } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Bell, Download, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityFeed,
   DocumentHub,
@@ -13,8 +13,8 @@ import {
 } from "../components/project/ProjectWidgets";
 import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
-import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
-import type { Task } from "../types";
+import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath, type ProjectTabId } from "../routing/projectRoutes";
+import type { NotificationPreferences, Task } from "../types";
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
@@ -745,27 +745,268 @@ export function VersionHistoryPage({ projectState, selectedProjectId, canViewInt
   );
 }
 
-export function SettingsPage({ role, onResetProjectState, onSeedProjectState }: ProjectPageProps) {
+const defaultNotificationPreferences: NotificationPreferences = {
+  taskAssignments: true,
+  dueDates: true,
+  risks: true,
+  projectMessages: false,
+  emailDelivery: false
+};
+
+type SettingsTab = "profile" | "account" | "access" | "notifications";
+
+export function SettingsPage({
+  firebaseUser,
+  profileRole,
+  role,
+  userProfile,
+  projectState,
+  developmentToolsEnabled,
+  onNavigate,
+  onUpdateUserProfile,
+  onSendPasswordReset,
+  settingsTab = "profile"
+}: ProjectPageProps & { settingsTab?: SettingsTab }) {
+  const [displayName, setDisplayName] = useState(userProfile?.name ?? firebaseUser.displayName ?? "");
+  const [avatarInitials, setAvatarInitials] = useState(userProfile?.avatarInitials ?? deriveInitials(userProfile?.name ?? firebaseUser.displayName ?? firebaseUser.email ?? "AP"));
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({
+    ...defaultNotificationPreferences,
+    ...userProfile?.notificationPreferences
+  });
+  const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const providerIds = firebaseUser.providerData.map((provider) => provider.providerId).join(", ") || "password";
+  const memberships = userProfile
+    ? projectState.projectMembers.filter((member) => member.userId === userProfile.id)
+    : [];
+
+  useEffect(() => {
+    setDisplayName(userProfile?.name ?? firebaseUser.displayName ?? "");
+    setAvatarInitials(userProfile?.avatarInitials ?? deriveInitials(userProfile?.name ?? firebaseUser.displayName ?? firebaseUser.email ?? "AP"));
+    setNotificationPreferences({ ...defaultNotificationPreferences, ...userProfile?.notificationPreferences });
+  }, [firebaseUser.displayName, firebaseUser.email, userProfile]);
+
+  async function saveProfile() {
+    setStatusMessage("");
+    setErrorMessage("");
+
+    try {
+      await onUpdateUserProfile({
+        name: displayName.trim(),
+        avatarInitials: avatarInitials.trim().toUpperCase()
+      });
+      setStatusMessage("Profile saved.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Profile could not be saved.");
+    }
+  }
+
+  async function saveNotifications() {
+    setStatusMessage("");
+    setErrorMessage("");
+
+    try {
+      await onUpdateUserProfile({ notificationPreferences });
+      setStatusMessage("Notification preferences saved. Delivery is not active until project messaging and notification delivery are implemented.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Notification preferences could not be saved.");
+    }
+  }
+
+  async function sendPasswordReset() {
+    setStatusMessage("");
+    setErrorMessage("");
+
+    try {
+      await onSendPasswordReset();
+      setStatusMessage(`Password reset email sent to ${firebaseUser.email}.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Password reset is unavailable for this account.");
+    }
+  }
+
+  const tabs: Array<{ id: SettingsTab; label: string; icon: typeof UserCircle }> = [
+    { id: "profile", label: "Profile", icon: UserCircle },
+    { id: "account", label: "Account", icon: KeyRound },
+    { id: "access", label: "Access", icon: ShieldCheck },
+    { id: "notifications", label: "Notifications", icon: Bell }
+  ];
+
   return (
     <div className="page-stack">
-      <section className="panel">
+      <section className="panel settings-shell">
         <div className="panel-header">
           <div>
-            <h1>Settings</h1>
-            <p>Workspace, organization, notification, and integration settings will be configured in a later phase.</p>
+            <h1>Account Settings</h1>
+            <p>Manage your own profile, account information, access summary, and notification preferences.</p>
           </div>
         </div>
-        <div className="page-grid three">
-          {["Workspace Profile", "Team Access", "Integration Controls"].map((item) => (
-            <article className="document-card" key={item}>
-              <FileText size={24} aria-hidden="true" />
-              <h2>{item}</h2>
-              <p>{role === "admin" ? "Admin editable in a future phase" : "Read-only in this role"}</p>
-            </article>
-          ))}
+        <div className="settings-layout">
+          <nav className="settings-tabs" aria-label="Account settings">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const active = settingsTab === tab.id;
+
+              return (
+                <button
+                  aria-current={active ? "page" : undefined}
+                  className={active ? "settings-tab active" : "settings-tab"}
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onNavigate(tab.id === "profile" ? "/settings/profile" : `/settings/${tab.id}`)}
+                >
+                  <Icon size={17} aria-hidden="true" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+          <div className="settings-content">
+            {statusMessage ? <p className="form-status success" role="status">{statusMessage}</p> : null}
+            {errorMessage ? <p className="form-status error" role="alert">{errorMessage}</p> : null}
+
+            {settingsTab === "profile" ? (
+              <section aria-labelledby="profile-settings-heading">
+                <h2 id="profile-settings-heading">Profile</h2>
+                <div className="form-grid two">
+                  <label>
+                    Display name
+                    <input value={displayName} onChange={(event) => {
+                      setDisplayName(event.target.value);
+                      setAvatarInitials((current) => current || deriveInitials(event.target.value));
+                    }} />
+                  </label>
+                  <label>
+                    Avatar initials
+                    <input maxLength={4} value={avatarInitials} onChange={(event) => setAvatarInitials(event.target.value.toUpperCase())} />
+                  </label>
+                  <label>
+                    Authenticated email
+                    <input readOnly value={firebaseUser.email ?? userProfile?.email ?? ""} />
+                  </label>
+                  <label>
+                    Organization role
+                    <input readOnly value={profileRole.replace("_", " ")} />
+                  </label>
+                </div>
+                <p className="panel-note">Profile editing is limited to your display name and avatar initials. Email, organization, and role changes require administrator action.</p>
+                <button className="action-button" type="button" onClick={() => void saveProfile()}>Save Profile</button>
+              </section>
+            ) : null}
+
+            {settingsTab === "account" ? (
+              <section aria-labelledby="account-settings-heading">
+                <h2 id="account-settings-heading">Account</h2>
+                <div className="form-grid two readonly-grid">
+                  <label>
+                    Authenticated email
+                    <input readOnly value={firebaseUser.email ?? ""} />
+                  </label>
+                  <label>
+                    Authentication provider
+                    <input readOnly value={providerIds} />
+                  </label>
+                  <label>
+                    Firebase UID
+                    <input readOnly value={firebaseUser.uid} />
+                  </label>
+                  <label>
+                    Email verified
+                    <input readOnly value={firebaseUser.emailVerified ? "Yes" : "No"} />
+                  </label>
+                </div>
+                <button className="secondary-button" type="button" disabled={!firebaseUser.email || !providerIds.includes("password")} onClick={() => void sendPasswordReset()}>
+                  Send Password Reset
+                </button>
+                {!providerIds.includes("password") ? <p className="panel-note">Password reset is available only for password-based Firebase accounts.</p> : null}
+              </section>
+            ) : null}
+
+            {settingsTab === "access" ? (
+              <section aria-labelledby="access-settings-heading">
+                <h2 id="access-settings-heading">Access</h2>
+                <div className="page-grid three">
+                  <SummaryMetricCard label="Real role" value={profileRole.replace("_", " ")} helper="Loaded from your Firestore organization-user profile." />
+                  <SummaryMetricCard label="Preview role" value={role === profileRole ? "Off" : role.replace("_", " ")} helper="Preview mode is visual only and never changes authorization." />
+                  <SummaryMetricCard label="Memberships" value={`${memberships.length}`} helper="Project memberships visible to your account." />
+                </div>
+                {memberships.length > 0 ? (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Project</th>
+                          <th>Membership role</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {memberships.map((member) => {
+                          const project = projectState.projects.find((item) => item.id === member.projectId);
+
+                          return (
+                            <tr key={`${member.projectId}-${member.userId}`}>
+                              <td>{project?.name ?? member.projectId}</td>
+                              <td>{member.role}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p className="panel-note">No project memberships are currently visible for this account.</p>}
+                {profileRole === "admin" && developmentToolsEnabled ? (
+                  <button className="secondary-button" type="button" onClick={() => onNavigate("/admin")}>Open Administration</button>
+                ) : null}
+              </section>
+            ) : null}
+
+            {settingsTab === "notifications" ? (
+              <section aria-labelledby="notification-settings-heading">
+                <h2 id="notification-settings-heading">Notifications</h2>
+                <p className="panel-note">These preferences are saved now. Automatic email delivery is not active until project messaging and notification delivery are implemented.</p>
+                <div className="settings-checklist">
+                  {[
+                    ["taskAssignments", "Task assignment notifications"],
+                    ["dueDates", "Due-date notifications"],
+                    ["risks", "Risk notifications"],
+                    ["projectMessages", "Project-message notifications"],
+                    ["emailDelivery", "Email delivery enabled"]
+                  ].map(([key, label]) => (
+                    <label key={key}>
+                      <input
+                        checked={Boolean(notificationPreferences[key as keyof NotificationPreferences])}
+                        type="checkbox"
+                        onChange={(event) => setNotificationPreferences((current) => ({
+                          ...current,
+                          [key]: event.target.checked
+                        }))}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <button className="action-button" type="button" onClick={() => void saveNotifications()}>Save Notification Preferences</button>
+              </section>
+            ) : null}
+          </div>
         </div>
       </section>
-      <section className="panel">
+    </div>
+  );
+}
+
+function deriveInitials(source: string) {
+  return source
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "AP";
+}
+
+export function DevelopmentSettingsPanel({ onResetProjectState, onSeedProjectState }: Pick<ProjectPageProps, "onResetProjectState" | "onSeedProjectState">) {
+  return (
+    <section className="panel">
         <div className="panel-header">
           <div>
             <h2>Demo Data</h2>
@@ -777,7 +1018,6 @@ export function SettingsPage({ role, onResetProjectState, onSeedProjectState }: 
           </div>
         </div>
       </section>
-    </div>
   );
 }
 
@@ -794,7 +1034,7 @@ export function PlaceholderPage({ title, description }: { title: string; descrip
   );
 }
 
-export function LegacyProjectRoutePage({ selectedProjectId, onNavigate, targetTab }: ProjectPageProps & { targetTab: "plan" | "tasks" | "messages" | "files" | "metrics" }) {
+export function LegacyProjectRoutePage({ selectedProjectId, onNavigate, targetTab }: ProjectPageProps & { targetTab: ProjectTabId }) {
   return (
     <section className="panel">
       <div className="panel-header">

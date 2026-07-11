@@ -98,8 +98,11 @@ function renderHome(overrides: Partial<ProjectPageProps> = {}) {
     projectState: overrides.projectState ?? initialProjectState,
     selectedProjectId: overrides.selectedProjectId ?? "project_northstar_portal",
     activeProjectTab: overrides.activeProjectTab ?? "plan",
+    firebaseUser: overrides.firebaseUser ?? firebaseUser,
     role: overrides.role ?? "admin",
+    profileRole: overrides.profileRole ?? "admin",
     userProfile,
+    developmentToolsEnabled: overrides.developmentToolsEnabled ?? false,
     canEdit: overrides.canEdit ?? true,
     canManage: overrides.canManage ?? true,
     canAddTaskComments: overrides.canAddTaskComments ?? true,
@@ -130,6 +133,8 @@ function renderHome(overrides: Partial<ProjectPageProps> = {}) {
     onProjectImported: overrides.onProjectImported ?? vi.fn().mockResolvedValue(undefined),
     onProjectUpdated: overrides.onProjectUpdated ?? vi.fn().mockResolvedValue(undefined),
     onExportProject: overrides.onExportProject ?? vi.fn().mockResolvedValue(undefined),
+    onUpdateUserProfile: overrides.onUpdateUserProfile ?? vi.fn().mockResolvedValue(undefined),
+    onSendPasswordReset: overrides.onSendPasswordReset ?? vi.fn().mockResolvedValue(undefined),
     onNavigate: overrides.onNavigate ?? vi.fn(),
     onProjectChange: overrides.onProjectChange ?? vi.fn(),
     onNewTask: overrides.onNewTask ?? vi.fn()
@@ -137,3 +142,11 @@ function renderHome(overrides: Partial<ProjectPageProps> = {}) {
 
   return render(<HomePage {...props} />);
 }
+
+const firebaseUser = {
+  uid: "user_elena",
+  email: "elena@example.com",
+  emailVerified: true,
+  displayName: "Elena Torres",
+  providerData: [{ providerId: "password" }]
+} as ProjectPageProps["firebaseUser"];

@@ -492,6 +492,7 @@ export function TestPage() {
         onMicrosoftEmailFormChange={updateMicrosoftEmailForm}
         onPreviewOrderReceivedEmail={handlePreviewOrderReceivedEmail}
         onPreviewOrderReceivedSms={handlePreviewOrderReceivedSms}
+        onSendMockSms={handleSendMockSms}
         onSendMockOrderEmail={handleSendMockOrderEmail}
         onSendMockOrderSms={handleSendMockOrderSms}
         onSendMockTestEmail={handleSendMockTestEmail}

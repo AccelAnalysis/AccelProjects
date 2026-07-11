@@ -441,7 +441,11 @@ export async function createProjectUpdatePlan(input: ProjectUpdatePlannerInput):
   const additions = changes.filter((change) => change.kind === "added");
   const modifications = changes.filter((change) => change.kind === "modified");
   const removals = changes.filter((change) => change.kind === "removed");
-  const destructiveSummary = Object.fromEntries(Object.entries(changeCounts.byEntityType).map(([key, value]) => [key, value.removed]).filter(([, removed]) => removed > 0));
+  const destructiveSummary = Object.fromEntries(
+    Object.entries(changeCounts.byEntityType)
+      .map(([key, value]) => [key, value.removed] as const)
+      .filter(([, removed]) => removed > 0)
+  );
   const warnings = issues.filter((item) => item.severity === "warning");
 
   return {

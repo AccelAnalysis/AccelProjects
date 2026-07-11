@@ -451,7 +451,7 @@ export function PlanWorkspace({
   }
 
   function bulkShift() {
-    const selected = tasks.filter((task) => selectedTaskIds.has(task.id) && isScheduledTask(task));
+    const selected = tasks.filter((task): task is Task & { startDate: string; dueDate: string } => selectedTaskIds.has(task.id) && isScheduledTask(task));
     const updates = selected.map((task) => ({
       taskId: task.id,
       updates: { startDate: addDays(task.startDate, bulkShiftDays), dueDate: addDays(task.dueDate, bulkShiftDays) }
@@ -658,7 +658,6 @@ export function PlanWorkspace({
                 key={row.id}
                 row={row}
                 users={users}
-                phases={phases}
                 selectedTaskIds={selectedTaskIds}
                 onToggleCollapse={toggleCollapse}
                 onToggleTask={toggleTask}
@@ -1142,7 +1141,13 @@ function formatTaskDateRange(task: Task) {
   if (task.startDate && task.dueDate) {
     return task.startDate === task.dueDate ? formatDateOnly(task.startDate) : `${formatDateOnly(task.startDate)}-${formatDateOnly(task.dueDate)}`;
   }
-  return task.startDate ? `Starts ${formatDateOnly(task.startDate)}` : `Due ${formatDateOnly(task.dueDate)}`;
+  if (task.startDate) {
+    return `Starts ${formatDateOnly(task.startDate)}`;
+  }
+  if (task.dueDate) {
+    return `Due ${formatDateOnly(task.dueDate)}`;
+  }
+  return "Unscheduled";
 }
 
 function ColorLegend({ colorMode, phases, users }: { colorMode: PlanColorMode; phases: Phase[]; users: User[] }) {
@@ -1385,9 +1390,7 @@ function colorClass(task: Task, mode: PlanColorMode, phases: Phase[], users: Use
     return `status-${task.status}`;
   }
 
-  const source = mode === "status"
-    ? task.status
-    : mode === "priority"
+  const source = mode === "priority"
       ? task.priority
       : mode === "phase"
         ? task.phaseId

@@ -1,85 +1,186 @@
-# AccelProjects Prototype
+# AccelProjects
 
-AccelProjects is a high-fidelity project-management platform prototype with Firebase Authentication and Firestore-backed project data. The existing Billing module is preserved from the original Mini Billing Messenger learning app.
+AccelProjects is a Firebase-backed internal project-management workspace. The original Mini Billing Messenger billing module remains in the repository, but the primary application surface is now AccelProjects project tracking, imports, exports, update-via-file, revisions, scheduling, risks, and account settings.
 
-## What Is Still Mocked
+## Production-Capable Surfaces
 
-- Authorization is still simulated with a Preview Role selector. Firebase Authentication identifies the signed-in user, but the preview role is not a security boundary.
-- Project, client, task, phase, milestone, risk, document, metric, and message data can be seeded from mock data into Firestore.
-- Project-management task, comment, and risk edits persist to Firestore.
-- Browser `localStorage` is only used for UI preferences such as selected project, preview role, and client-safe preview.
-- Client-safe preview is a UI demonstration, not a security boundary.
-- Gantt/timeline dependency rendering is visual only and does not use a scheduling engine.
+- Firebase Authentication sign-in and sign-out.
+- Firestore-backed organization users, clients, projects, members, phases, milestones, tasks, dependencies, risks, documents, metrics, activity, versions, export snapshots, update manifests, and import manifests.
+- Project creation through validated AccelProjects Project Package imports.
+- Existing-project updates through verified project export files.
+- Project exports and immutable revision records.
+- Task, schedule, milestone, dependency, risk, document, metric, and comment persistence through the established Firestore data layer.
+- Account settings for profile display name, avatar initials, read-only account metadata, access summary, password reset, and persisted notification preferences.
+- Backend API authentication for application-data and provider-status routes using Firebase ID tokens.
+- CI quality gate for type-checking, unit/component/backend tests, Firestore rules tests, production build, and committed-file guard.
 
-## What Is Interactive Now
+## Prototype Or Deferred Surfaces
 
-- Switch active projects from the project context header.
-- Import validated AccelProjects Project Package JSON through `/projects/import`.
-- Export an existing project and safely update that same project from a verified exported file.
-- Search tasks, files, and people.
-- Filter tasks by status, owner, and phase.
-- Create tasks with a simple form.
-- Open task details in a side panel.
-- Edit task status, owner, due date, and priority.
-- Add task activity notes.
-- Add and update risks.
-- Sign in and sign out with Firebase email/password authentication.
-- Load, seed, update, reset, and manually test project state through Firestore.
-- The backend project API remains available in System Tests for compatibility checks.
-- Toggle between internal and client-safe preview modes.
-- Billing, Admin, Integration Test Center, Microsoft email, Twilio SMS, Stripe Checkout/webhook routes, and logs remain available.
+- Client portal data loading is not implemented. Production client-role users are not granted internal project access.
+- Role Preview and Client-Safe Preview are development/test-only UI aids, not authorization.
+- Notification preferences are stored, but automatic notification/email delivery is not active yet.
+- Project email workflow is not connected yet.
+- Dependency-aware schedule recalculation is not implemented; dependencies are validated and rendered, but the Gantt does not run a scheduling engine.
+- Billing, Microsoft Graph email, Twilio SMS, Stripe checkout, and integration test tooling remain available for compatibility and development workflows, but test/demo controls are hidden from normal production navigation.
+- Historical revision restore/rollback is not implemented.
 
-## Firebase Setup
+## Authorization Model
 
-Copy `.env.example` to `.env`, fill in the `VITE_FIREBASE_*` values for the `accelprojects` Firebase project, and restart Vite. If these values are missing, the app shows a setup message instead of a blank screen.
+Authorization comes from the authenticated Firebase user plus the Firestore organization-user profile at:
 
-## Project Imports And Updates
+```text
+organizations/org_accel_projects/users/{uid}
+```
 
-AccelProjects has two separate file workflows:
+The real role in that document controls application permissions and Firestore access. The current roles are `admin`, `project_manager`, `contributor`, `viewer`, and `client`.
 
-- **Import New Project** at `/projects/import` creates a new project from package type `accelprojects.project` schema `1.0`.
-- **Update via File** at `/projects/{projectId}/update` updates only the selected existing project from package type `accelprojects.project.export`.
+- Admins can access all organization projects and manage supported user roles.
+- Project managers can read projects they own or projects where they are explicit members. They can manage schedules for owned or lead-member projects.
+- Contributors and viewers can read only projects where they are explicit members.
+- Contributors can update only allowed fields on their assigned tasks.
+- Clients are blocked from the internal project workspace until a client-specific portal/data path exists.
+- Self-service profile updates can change only display name, avatar initials, notification preferences, and updated timestamp.
+- Users cannot self-promote, change organization identity, edit another user, delete another user, or alter protected profile fields.
+- Organization document updates are admin-only and limited to supported fields.
 
-The selected-project update workflow never creates a second project or client. The portfolio import workflow remains create-only.
+Project membership documents are written with the user ID as the Firestore document ID for rule-checkable membership lookups. Legacy member documents whose document IDs are not user IDs should be backfilled before relying on strict member-scoped access for those records.
 
-### Import New Project
+## Development Preview And Tool Guards
 
-AccelProjects supports a preview-first project import workflow for structured project packages from any source, including AI-generated project plans, manually prepared JSON packages, converted project documentation, planning conversations, requirements documents, repository analysis, and future supported conversion tools. Import files must be strict JSON using package type `accelprojects.project` and schema version `1.0`; accepted file extensions are `.json` and `.accelproject.json`.
+Role preview is disabled by default. Enable it only in development or tests:
 
-Workflow:
+```bash
+VITE_ENABLE_ROLE_PREVIEW=true
+```
 
-1. Open `/projects/import`.
-2. Paste package JSON or choose a package file up to 2 MB.
-3. Validate the package schema and relationship rules.
-4. Review client matching, people matching, proposed counts, warnings, and preview tables.
-5. Resolve the project owner to an existing AccelProjects user.
-6. Check the explicit approval box.
-7. Import the package into Firestore.
+Development tools are disabled in production builds. Enable them only for development/test workflows:
 
-Validation checks required fields, supported enum values, date formats, numeric values, unique keys and aliases, missing references, duplicate dependencies, circular dependencies, and date ordering. Fatal errors block import. Warnings remain visible in the preview and import manifest.
+```bash
+VITE_ENABLE_DEVELOPMENT_TOOLS=true
+```
 
-Client matching supports `match_or_create` only. Existing clients are matched by exact normalized email first, then exact normalized name. People are matched to existing AccelProjects users by exact normalized email or manual selection. Imports do not create Firebase Authentication users, fake users, update existing projects, merge data, replace data, or delete records.
+The app still uses the real Firestore profile role for authorization. Preview mode never changes Firestore rules, backend API authorization, or the authenticated organization-user profile.
 
-Every import creates an audit manifest at `organizations/org_accel_projects/imports/{importId}`. The manifest records package ID, source hash, project/client IDs, generated entity mappings, counts, user, timestamps, status, warnings, and error details. Completed or processing manifests with the same package ID or source hash block duplicate imports by default.
+## Environment Setup
 
-The sample fixture is at `src/imports/fixtures/sampleProjectImport.json`. Use Import New Project or the Import Package Tests section on System Tests to load, validate, preview, optionally write, reload, and duplicate-check the sample project package. Before importing the first production project package, validate it through the preview workflow and confirm the target users and clients are correct.
+Copy `.env.example` to `.env`, fill in the Firebase values, and restart Vite:
 
-### Update Via File
+```bash
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=accelprojects.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=accelprojects
+VITE_FIREBASE_STORAGE_BUCKET=accelprojects.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_MEASUREMENT_ID=
+VITE_ENABLE_FIREBASE_SIGNUP=false
+VITE_ENABLE_ROLE_PREVIEW=false
+VITE_ENABLE_DEVELOPMENT_TOOLS=false
+```
 
-Update via File uses a canonical project export as the editable contract. New exports use schema `1.1` and include `exportSnapshotId` provenance metadata. Legacy schema `1.0` exports can be used only when exactly one matching immutable export snapshot exists for the selected project and its stored package hash verifies.
+Provider variables for Microsoft Graph, Twilio, and Stripe are also listed in `.env.example`. Do not commit real provider secrets.
 
-The update page verifies:
+The backend Firebase Admin SDK verifies bearer ID tokens. Local development can use the project ID from `FIREBASE_PROJECT_ID`, `GCLOUD_PROJECT`, or `VITE_FIREBASE_PROJECT_ID`.
 
-- The uploaded file is valid JSON, package type `accelprojects.project.export`, and schema `1.0` or `1.1`.
-- The export snapshot exists, belongs to the selected project, and matches the stored source hash.
-- The file targets the selected project and current base revision.
-- Client identity, project owner, project membership, and immutable IDs are unchanged.
-- Existing entity IDs remain stable.
-- New records use temporary IDs beginning with `new_`, such as `new_task_client_review`.
-- Temporary IDs are resolved to Firestore IDs before persistence; no `new_` IDs are stored.
-- Assignees and document owners are existing project members.
-- Dependencies remain valid after additions, edits, removals, and temporary-ID resolution.
-- Tasks with comments are not deleted by file update.
+## Local Development
+
+Install dependencies and start the app:
+
+```bash
+npm ci
+npm run dev
+```
+
+The Vite app normally runs at `http://localhost:5173` and the API at `http://localhost:5174`.
+
+Firestore rules tests require Java because the Firebase emulator depends on it. CI uses Temurin 21. On macOS with Homebrew, a local equivalent is:
+
+```bash
+brew install openjdk@21
+JAVA_HOME=/opt/homebrew/opt/openjdk@21 PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" npm run test:rules
+```
+
+## Validation Commands
+
+Run the same quality gate locally:
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run test:rules
+npm run build
+git diff --check
+```
+
+The repository also includes:
+
+```bash
+npm run check:committed-files
+```
+
+That guard fails if generated or unrelated files such as `dist/`, `.DS_Store`, or `accelprojects-dashboard-redesign.png` are accidentally committed.
+
+## CI
+
+`.github/workflows/quality-gate.yml` runs on pull requests and pushes to `main`.
+
+The workflow uses:
+
+- Node.js `22.17.0`
+- Temurin Java `21`
+- `npm ci`
+- `npm run typecheck`
+- `npm test`
+- `npm run test:rules`
+- `npm run build`
+- `npm run check:committed-files`
+
+No production Firebase credentials are required for Firestore rules-unit tests.
+
+## Backend API Protection
+
+`/api/health` remains public and minimal. Stripe webhooks remain protected by Stripe signature verification and do not require Firebase bearer tokens.
+
+Application-data routes and provider configuration checks require:
+
+```http
+Authorization: Bearer <firebase-id-token>
+```
+
+The server verifies the Firebase ID token, loads the organization-user profile, attaches `request.auth`, and returns:
+
+- `401` for missing, invalid, or expired tokens.
+- `403` for authenticated users without an authorized AccelProjects organization profile or role.
+
+Microsoft Graph, Twilio, and Stripe configuration-check routes are admin-only and return non-sensitive status fields. They do not expose secrets, token values, or full credentials.
+
+The frontend API client automatically includes the current Firebase ID token when a user is signed in and surfaces 401/403 responses as session/authorization errors.
+
+## Account Settings
+
+The profile menu routes to distinct settings surfaces:
+
+- `/settings/profile`: edit display name and avatar initials; email and role are read-only.
+- `/settings/account`: show email, provider, Firebase UID, verification state, and password-reset action for password accounts.
+- `/settings/access`: show the real Firestore role, visual preview status, and visible project memberships.
+- `/settings/notifications`: persist task assignment, due date, risk, project-message, and email-delivery preferences.
+
+Notification preferences are saved now. Automatic delivery is deferred.
+
+## Project Imports
+
+`/projects/import` creates a new project from package type `accelprojects.project` schema `1.0`.
+
+Import validation checks required fields, enum values, date formats, numeric values, unique keys and aliases, missing references, duplicate dependencies, circular dependencies, and date ordering. Fatal errors block import. Completed or processing manifests with the same package ID or source hash block duplicate imports.
+
+Imports do not create Firebase Authentication users, update existing projects, merge data, replace data, or delete records.
+
+## Update Via File
+
+`/projects/{projectId}/update` updates only the selected existing project from package type `accelprojects.project.export`.
+
+The update workflow verifies the export snapshot, source hash, selected project identity, current base revision, immutable IDs, client identity, membership identity, assignees, document owners, dependency validity, and temporary IDs before persistence.
 
 Supported update scope:
 
@@ -88,49 +189,19 @@ Supported update scope:
 
 Not supported through update files:
 
-- Client record edits, project owner changes, project membership changes, organization users, Firebase Authentication users, task comments, activity history rewrites, prior versions, prior snapshots, import manifests, or arbitrary version restore.
+- Client edits, project owner changes, membership changes, organization users, Firebase Authentication users, task comments, activity history rewrites, prior versions, prior snapshots, import manifests, arbitrary restores, or rollbacks.
 
-Update apply is one Firestore transaction. A successful file update creates exactly one project revision, one `ProjectVersion` with change type `project_file_updated`, one activity event, one immutable update manifest keyed by the uploaded-file SHA-256 hash, and one canonical result snapshot. Duplicate files are blocked by the update manifest. No-op files do not create revisions.
+Apply is one Firestore transaction. A successful file update creates one project revision, one `ProjectVersion`, one activity event, one immutable update manifest keyed by uploaded-file SHA-256 hash, and one canonical result snapshot.
 
 Safety limits:
 
 - Maximum planned writes: 450.
 - Maximum canonical snapshot JSON size: 700,000 UTF-8 bytes.
-- Larger updates are blocked instead of split into multiple non-atomic batches.
 
-Stale protection:
+## Current Next Work
 
-- Preview requires the selected project revision to match the export base revision.
-- Apply re-reads the project, source snapshot, and deterministic update manifest inside the transaction.
-- If the project changed after preview, no changes are applied; export the current project again.
-
-Version History shows file-update revisions with added, modified, removed counts, uploaded-file hash, result-state hash, and base revision. Rollback/restore from historical versions is not implemented yet.
-
-A generic non-sensitive update fixture is available at `src/updates/fixtures/genericProjectUpdateExport.json`.
-
-Run unit tests and build checks with:
-
-```bash
-npm test
-npm run build
-git diff --check
-```
-
-Run Firestore rules tests with:
-
-```bash
-npm run test:rules
-```
-
-The Firestore rules test command requires a local Java runtime because the Firebase Firestore emulator depends on Java.
-
-## Backend/API Work Needed Next
-
-- Expand project API coverage for clients, phases, documents, metrics, messages, and dependencies.
-- Connect project messages to the existing Microsoft Graph email log foundation.
-- Connect project billing records to the existing order/payment module.
-- Replace the visual Gantt with dependency-aware scheduling logic.
-
-## Recommended Next Phase
-
-Add server-side large-project update processing or restore workflows once snapshot coverage is designed for all relevant revisions.
+- Build a secure client portal/data path instead of exposing internal workspace data to client-role users.
+- Connect project messages to Microsoft Graph email delivery.
+- Add automatic notification delivery using the persisted preferences.
+- Add dependency-aware schedule recalculation when the scheduling model is ready.
+- Design restore/rollback workflows for historical revisions.

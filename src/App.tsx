@@ -18,9 +18,10 @@ import {
   UserCircle,
   Users
 } from "lucide-react";
-import type { User as FirebaseUser } from "firebase/auth";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { sendPasswordResetEmail, updateProfile as updateFirebaseProfile, type User as FirebaseUser } from "firebase/auth";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import { auth } from "./firebase";
 import { LoginPage } from "./auth/LoginPage";
 import { AdminPage } from "./pages/AdminPage";
 import { CustomerOrderPage } from "./pages/CustomerOrderPage";
@@ -90,6 +91,7 @@ import {
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
   updateMilestoneInFirestore,
+  updateOwnUserProfileInFirestore,
   updateRiskInFirestore,
   updateTaskDependencyInFirestore,
   updateTaskInFirestore
@@ -106,6 +108,7 @@ import {
   saveAdminPreviewRole,
   saveSelectedProjectId
 } from "./data/projectStore";
+import { areDevelopmentToolsEnabled, isRolePreviewEnabled } from "./environment";
 import { validateDependencies } from "./scheduling/dependencyGraph";
 import type { Milestone, ProjectActivityEvent, ProjectRisk, ProjectState, Task, TaskDependency, User, UserRole } from "./types";
 import { formatDateOnly } from "./utils/dateOnly";
@@ -130,8 +133,11 @@ export type ProjectPageProps = {
   projectState: ProjectState;
   selectedProjectId: string;
   activeProjectTab: ProjectTabId;
+  firebaseUser: FirebaseUser;
   role: UserRole;
+  profileRole: UserRole;
   userProfile: User | null;
+  developmentToolsEnabled: boolean;
   canEdit: boolean;
   canManage: boolean;
   canAddTaskComments: boolean;
@@ -162,6 +168,8 @@ export type ProjectPageProps = {
   onProjectImported: (projectId: string) => Promise<void>;
   onProjectUpdated: (projectId: string) => Promise<void>;
   onExportProject: (projectId: string) => Promise<void>;
+  onUpdateUserProfile: (updates: Pick<Partial<User>, "name" | "avatarInitials" | "notificationPreferences">) => Promise<void>;
+  onSendPasswordReset: () => Promise<void>;
   onNavigate: (path: string, options?: { replace?: boolean }) => void;
   onProjectChange: (projectId: string) => void;
   onNewTask: () => void;
@@ -194,6 +202,7 @@ function getFatalDependencyValidationMessage(tasks: Task[], dependencies: TaskDe
 function getRoute(props: ProjectPageProps, pathname: string) {
   const path = pathname;
   const projectRoute = parseProjectRoute(path);
+  const developmentToolsEnabled = props.developmentToolsEnabled && props.profileRole === "admin";
 
   if (projectRoute.type === "portfolio") {
     return <ProjectsPage {...props} />;
@@ -318,27 +327,39 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   }
 
   if (path === "/notifications") {
-    return <PlaceholderPage title="Notifications" description="Project notifications and delivery alerts will be managed here in a later phase." />;
+    return <SettingsPage {...props} settingsTab="notifications" />;
   }
 
   if (path === "/billing") {
     return <CustomerOrderPage />;
   }
 
-  if (path === "/settings") {
-    return <SettingsPage {...props} />;
+  if (path === "/settings" || path === "/settings/profile") {
+    return <SettingsPage {...props} settingsTab="profile" />;
+  }
+
+  if (path === "/settings/account") {
+    return <SettingsPage {...props} settingsTab="account" />;
+  }
+
+  if (path === "/settings/access") {
+    return <SettingsPage {...props} settingsTab="access" />;
+  }
+
+  if (path === "/settings/notifications") {
+    return <SettingsPage {...props} settingsTab="notifications" />;
   }
 
   if (path === "/system-tests") {
-    return <SystemTestsPage />;
+    return developmentToolsEnabled ? <SystemTestsPage /> : <UnavailablePage title="System Tests unavailable" description="System Tests are available only to administrators in development tooling mode." />;
   }
 
   if (path === "/admin") {
-    return <AdminPage />;
+    return developmentToolsEnabled ? <AdminPage /> : <UnavailablePage title="Operations Dashboard unavailable" description="The operations dashboard is available only to administrators in development tooling mode." />;
   }
 
   if (path === "/test") {
-    return <TestPage />;
+    return developmentToolsEnabled ? <TestPage /> : <UnavailablePage title="Integration Test Center unavailable" description="Integration tests are available only to administrators in development tooling mode." />;
   }
 
   if (path === "/payment-success") {
@@ -350,6 +371,19 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   }
 
   return <HomePage {...props} />;
+}
+
+function UnavailablePage({ title, description }: { title: string; description: string }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export function TopHeader({
@@ -425,6 +459,28 @@ export function TopHeader({
     onLogout();
   }
 
+  function focusProfileMenuItem(offset: number) {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+    const activeIndex = items.findIndex((item) => item === document.activeElement);
+    const nextIndex = activeIndex >= 0
+      ? (activeIndex + offset + items.length) % items.length
+      : (offset > 0 ? 0 : items.length - 1);
+
+    items[nextIndex]?.focus();
+  }
+
+  function onProfileMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusProfileMenuItem(1);
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusProfileMenuItem(-1);
+    }
+  }
+
   return (
     <header className="top-header">
       <label className="search-box" aria-label="Search">
@@ -469,26 +525,26 @@ export function TopHeader({
             </span>
           </button>
           {profileMenuOpen ? (
-            <div className="profile-menu" role="menu" aria-label="Profile menu">
+            <div className="profile-menu" role="menu" aria-label="Profile menu" onKeyDown={onProfileMenuKeyDown}>
               <div className="profile-menu-summary">
                 <strong>{userProfile?.name ?? displayName}</strong>
                 {displayEmail ? <span>{displayEmail}</span> : null}
               </div>
-              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings/profile")}>
                 <UserCircle size={16} aria-hidden="true" />
                 View or Edit Profile
               </button>
-              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings/account")}>
                 <Settings size={16} aria-hidden="true" />
                 Account Settings
               </button>
               {role !== "client" ? (
-                <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+                <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings/access")}>
                   <ShieldCheck size={16} aria-hidden="true" />
                   Access Settings
                 </button>
               ) : null}
-              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/notifications")}>
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings/notifications")}>
                 <Bell size={16} aria-hidden="true" />
                 Notification Preferences
               </button>
@@ -681,13 +737,14 @@ function AppShell() {
     }
 
     let active = true;
+    const currentUser = user;
 
     async function loadState() {
       try {
-        await ensureFirestoreUserProfile(user);
+        await ensureFirestoreUserProfile(currentUser);
         const [profile, state] = await Promise.all([
-          loadCurrentUserProfileFromFirestore(user, { ensureProfile: false }),
-          loadProjectStateFromFirestore(user, { ensureProfile: false })
+          loadCurrentUserProfileFromFirestore(currentUser, { ensureProfile: false }),
+          loadProjectStateFromFirestore(currentUser, { ensureProfile: false })
         ]);
 
         if (!active) {
@@ -759,7 +816,9 @@ function AppShell() {
   );
   const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId) : undefined;
   const profileRole = getUserRole(userProfile);
-  const adminPreviewAvailable = canUseAdminPreview(profileRole);
+  const rolePreviewEnabled = isRolePreviewEnabled();
+  const developmentToolsEnabled = areDevelopmentToolsEnabled();
+  const adminPreviewAvailable = rolePreviewEnabled && canUseAdminPreview(profileRole);
   const role = adminPreviewAvailable && adminPreviewRole !== "off" ? adminPreviewRole : profileRole;
   const permissions = getProjectPermissions(role, userProfile, selectedProject, projectState);
   const clientPreview = role === "client";
@@ -768,6 +827,9 @@ function AppShell() {
   const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
   const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
   const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
+  const visibleUtilityNavItems = developmentToolsEnabled && profileRole === "admin"
+    ? utilityNavItems
+    : utilityNavItems.filter((item) => item.href !== "/system-tests");
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -807,6 +869,23 @@ function AppShell() {
 
     saveAdminPreviewRole(adminPreviewRole);
   }, [adminPreviewAvailable, adminPreviewRole]);
+
+  if (authLoading) {
+    return (
+      <main className="login-shell">
+        <section className="login-panel">
+          <h1>Loading AccelProjects</h1>
+          <p>Checking Firebase authentication status.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  const authenticatedUser = user;
 
   async function updateTask(taskId: string, updates: Partial<Task>) {
     const task = projectState.tasks.find((item) => item.id === taskId);
@@ -1254,12 +1333,44 @@ function AppShell() {
     }
   }
 
+  async function updateUserProfile(updates: Pick<Partial<User>, "name" | "avatarInitials" | "notificationPreferences">) {
+    try {
+      const updatedProfile = await updateOwnUserProfileInFirestore(updates);
+
+      if (updates.name && authenticatedUser.displayName !== updates.name) {
+        await updateFirebaseProfile(authenticatedUser, { displayName: updatedProfile.name });
+      }
+
+      setUserProfile(updatedProfile);
+      setProjectState((current) => ({
+        ...current,
+        users: current.users.map((item) => item.id === updatedProfile.id ? updatedProfile : item)
+      }));
+      setProjectNotice("Account settings saved.");
+    } catch (error) {
+      setProjectError(getFirestorePermissionMessage(error));
+      throw error;
+    }
+  }
+
+  async function sendAccountPasswordReset() {
+    if (!auth || !authenticatedUser.email) {
+      throw new Error("Password reset is unavailable for this account.");
+    }
+
+    await sendPasswordResetEmail(auth, authenticatedUser.email);
+    setProjectNotice(`Password reset sent to ${authenticatedUser.email}.`);
+  }
+
   const pageProps: ProjectPageProps = {
     projectState,
     selectedProjectId: selectedProject?.id ?? selectedProjectId,
     activeProjectTab,
+    firebaseUser: authenticatedUser,
     role,
+    profileRole,
     userProfile,
+    developmentToolsEnabled,
     canEdit: editable,
     canManage: manageable,
     canAddTaskComments: permissions.canAddTaskComments,
@@ -1290,6 +1401,8 @@ function AppShell() {
     onProjectImported: reloadAfterProjectImport,
     onProjectUpdated: reloadAfterProjectUpdate,
     onExportProject: exportProject,
+    onUpdateUserProfile: updateUserProfile,
+    onSendPasswordReset: sendAccountPasswordReset,
     onNavigate: navigate,
     onProjectChange: (projectId: string) => {
       setSelectedProjectId(projectId);
@@ -1301,28 +1414,13 @@ function AppShell() {
     onNewTask: () => setShowNewTaskForm(true)
   };
 
-  if (authLoading) {
-    return (
-      <main className="login-shell">
-        <section className="login-panel">
-          <h1>Loading AccelProjects</h1>
-          <p>Checking Firebase authentication status.</p>
-        </section>
-      </main>
-    );
-  }
-
-  if (!user) {
-    return <LoginPage />;
-  }
-
   if (projectLoading) {
     return (
       <div className="app-shell">
         <GlobalNavigation
           pathname={pathname}
           primaryItems={primaryNavItems}
-          utilityItems={utilityNavItems}
+          utilityItems={visibleUtilityNavItems}
           collapsed={globalNavCollapsed}
           brandLogo={accelLogo}
           onCollapsedChange={setGlobalNavCollapsed}
@@ -1362,7 +1460,7 @@ function AppShell() {
       <GlobalNavigation
         pathname={pathname}
         primaryItems={primaryNavItems}
-        utilityItems={utilityNavItems}
+        utilityItems={visibleUtilityNavItems}
         collapsed={globalNavCollapsed}
         brandLogo={accelLogo}
         onCollapsedChange={setGlobalNavCollapsed}
@@ -1402,13 +1500,19 @@ function AppShell() {
             <section className="panel empty-state">
               <div className="panel-header">
                 <div>
-                  <h1>No project data found.</h1>
-                  <p>Seed demo project data to start testing AccelProjects.</p>
+                  <h1>No authorized project data found.</h1>
+                  <p>
+                    {developmentToolsEnabled && profileRole === "admin"
+                      ? "Seed demo project data to start testing AccelProjects."
+                      : "Your account does not currently have access to an internal project workspace."}
+                  </p>
                 </div>
               </div>
-              <button className="action-button" type="button" onClick={() => void seedProjectState()}>
-                Seed Demo Data
-              </button>
+              {developmentToolsEnabled && profileRole === "admin" ? (
+                <button className="action-button" type="button" onClick={() => void seedProjectState()}>
+                  Seed Demo Data
+                </button>
+              ) : null}
             </section>
           ) : projectState.projects.length === 0 || !routeIsValidProjectWorkspace ? (
             <>

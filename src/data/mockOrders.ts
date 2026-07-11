@@ -20,6 +20,11 @@ const starterOrders: Order[] = [
     amount: 25,
     smsConsent: false,
     status: "draft",
+    paymentProvider: null,
+    paymentStatus: "unpaid",
+    stripeCheckoutSessionId: null,
+    stripePaymentIntentId: null,
+    paidAt: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
@@ -55,6 +60,11 @@ export function createOrder(input: OrderInput): Order {
     ...input,
     id: `order-${Date.now()}`,
     status: "draft",
+    paymentProvider: null,
+    paymentStatus: "unpaid",
+    stripeCheckoutSessionId: null,
+    stripePaymentIntentId: null,
+    paidAt: null,
     createdAt: now,
     updatedAt: now
   };
