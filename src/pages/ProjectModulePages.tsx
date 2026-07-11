@@ -13,7 +13,7 @@ import {
 } from "../components/project/ProjectWidgets";
 import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
-import { buildProjectPath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
+import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
 import type { Task } from "../types";
 import { todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
@@ -550,9 +550,9 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
               <History size={18} aria-hidden="true" />
               Version History
             </button>
-            <button className="secondary-button" type="button" disabled title="Update import is planned for the next safe-import phase.">
+            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectUpdatePath(project.id))}>
               <Upload size={18} aria-hidden="true" />
-              Update via File - planned next
+              Update via File
             </button>
           </div>
         ) : null}
@@ -574,7 +574,7 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
           </label>
         ))}
       </div>
-      <p className="panel-note">Update imports are intentionally disabled for selected projects until the safe update workflow is implemented. Portfolio import creates a new project only.</p>
+      <p className="panel-note">Update via File applies a verified export back to this existing project. Portfolio Import New Project still creates a separate project.</p>
     </section>
   );
 }
@@ -628,12 +628,23 @@ export function VersionHistoryPage({ projectState, selectedProjectId, canViewInt
               <tbody>
                 {sortedVersions.map((version) => {
                   const actor = projectState.users.find((user) => user.id === version.actorId);
+                  const metadata = version.metadata as Record<string, unknown>;
 
                   return (
                     <tr key={version.id}>
                       <td><strong>r{version.revision}</strong><span>from r{version.previousRevision}</span></td>
                       <td>{version.changeType.replaceAll("_", " ")}</td>
-                      <td>{version.summary}</td>
+                      <td>
+                        <strong>{version.summary}</strong>
+                        {version.changeType === "project_file_updated" ? (
+                          <details>
+                            <summary>File update details</summary>
+                            <p>Added {String(metadata.addedCount ?? 0)} · Modified {String(metadata.modifiedCount ?? 0)} · Removed {String(metadata.removedCount ?? 0)}</p>
+                            <p>Base revision {String(metadata.baseRevision ?? version.previousRevision)}</p>
+                            <p>Uploaded {String(metadata.uploadedFileHash ?? "").slice(0, 12)} · Result {String(metadata.resultStateHash ?? "").slice(0, 12)}</p>
+                          </details>
+                        ) : null}
+                      </td>
                       <td>{actor?.name ?? version.actorId}</td>
                       <td>{formatDate(version.createdAt)}</td>
                     </tr>

@@ -48,12 +48,18 @@ service cloud.firestore {
         && projectData(organizationId, projectId).ownerId == request.auth.uid;
     }
 
+    function isProjectLeadManager(organizationId, projectId) {
+      return isProjectManagerRole(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(request.auth.uid)).data.role == "lead";
+    }
+
     function canManageProjectSchedule(organizationId, projectId) {
-      return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId);
+      return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId) || isProjectLeadManager(organizationId, projectId);
     }
 
     function canWriteProjectRevisionFields(organizationId) {
-      return isOrgMember(organizationId)
+      return (canWriteProjectData(organizationId) || isContributorRole(organizationId))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "revision",
           "updatedAt",
@@ -64,7 +70,27 @@ service cloud.firestore {
     function canCreateProjectVersion(organizationId, projectId) {
       return isOrgMember(organizationId)
         && request.resource.data.projectId == projectId
-        && request.resource.data.actorId == request.auth.uid;
+        && request.resource.data.actorId == request.auth.uid
+        && (
+          (request.resource.data.changeType == "project_file_updated" && canManageProjectSchedule(organizationId, projectId))
+          || (request.resource.data.changeType != "project_file_updated" && canWriteProjectData(organizationId))
+          || (request.resource.data.changeType == "task_updated" && isContributorRole(organizationId))
+        );
+    }
+
+    function canCreateProjectSnapshot(organizationId, projectId) {
+      return canManageProjectSchedule(organizationId, projectId)
+        && request.resource.data.projectId == projectId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.snapshotType in ["manual_export", "revision_result"];
+    }
+
+    function canCreateUpdateManifest(organizationId, projectId, manifestId) {
+      return canManageProjectSchedule(organizationId, projectId)
+        && request.resource.data.id == manifestId
+        && request.resource.data.projectId == projectId
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.uploadedFileHash == manifestId;
     }
 
     function canContributorUpdateAssignedTask(organizationId) {
@@ -196,7 +222,14 @@ service cloud.firestore {
         }
 
         match /exportSnapshots/{snapshotId} {
-          allow read, create: if canManageProjectSchedule(organizationId, projectId);
+          allow read: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canCreateProjectSnapshot(organizationId, projectId);
+          allow update, delete: if false;
+        }
+
+        match /updateManifests/{manifestId} {
+          allow read: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canCreateUpdateManifest(organizationId, projectId, manifestId);
           allow update, delete: if false;
         }
       }

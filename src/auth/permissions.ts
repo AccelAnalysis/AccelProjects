@@ -34,20 +34,24 @@ export function isProjectMember(projectMembers: ProjectMember[], projectId: stri
   return projectMembers.some((member) => member.projectId === projectId && member.userId === userId);
 }
 
+export function isProjectLead(projectMembers: ProjectMember[], projectId: string, userId: string) {
+  return projectMembers.some((member) => member.projectId === projectId && member.userId === userId && member.role === "lead");
+}
+
 export function canManageProject(role: UserRole, userProfile: User | null | undefined, project: Project | undefined, projectState: ProjectState) {
   if (!project || !userProfile) {
     return false;
   }
 
-  if (role === "admin") {
+  if (role === "admin" && userProfile.role === "admin") {
     return true;
   }
 
-  if (role !== "project_manager") {
+  if (role !== "project_manager" || userProfile.role !== "project_manager") {
     return false;
   }
 
-  return project.ownerId === userProfile.id || isProjectMember(projectState.projectMembers, project.id, userProfile.id);
+  return project.ownerId === userProfile.id || isProjectLead(projectState.projectMembers, project.id, userProfile.id);
 }
 
 export function canEditTask(role: UserRole, userProfile: User | null | undefined, task: Task | undefined, projectState: ProjectState) {

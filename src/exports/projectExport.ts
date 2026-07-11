@@ -1,10 +1,14 @@
 import type { Client, Project, ProjectDocument, ProjectMetric, ProjectRisk, ProjectState, Task } from "../types";
 import { stableStringify } from "../imports/projectImportPlanner";
 
+export const currentProjectExportSchemaVersion = "1.1" as const;
+export const maxProjectSnapshotBytes = 700_000;
+
 export type ProjectExportPackage = {
-  schemaVersion: "1.0";
+  schemaVersion: "1.0" | "1.1";
   packageType: "accelprojects.project.export";
   packageId: string;
+  exportSnapshotId?: string;
   exportedAt: string;
   baseProjectId: string;
   baseRevision: number;
@@ -32,8 +36,18 @@ function normalizeProject(project: Project): Project {
   };
 }
 
-export function createCanonicalProjectExport(projectState: ProjectState, projectId: string, exportedAt = new Date().toISOString()): ProjectExportPackage {
+export function createProjectExportSnapshotId() {
+  return `export_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+}
+
+export function createCanonicalProjectExport(
+  projectState: ProjectState,
+  projectId: string,
+  exportedAt = new Date().toISOString(),
+  options: { schemaVersion?: ProjectExportPackage["schemaVersion"]; exportSnapshotId?: string } = {}
+): ProjectExportPackage {
   const project = projectState.projects.find((item) => item.id === projectId);
+  const schemaVersion = options.schemaVersion ?? currentProjectExportSchemaVersion;
 
   if (!project) {
     throw new Error(`Project ${projectId} is not available for export.`);
@@ -46,9 +60,10 @@ export function createCanonicalProjectExport(projectState: ProjectState, project
   const risks = projectState.risks.filter((risk: ProjectRisk) => risk.projectId === projectId);
 
   return {
-    schemaVersion: "1.0",
+    schemaVersion,
     packageType: "accelprojects.project.export",
     packageId: `export-${projectId}-r${project.revision ?? 1}-${exportedAt.replaceAll(/[:.]/g, "-")}`,
+    ...(schemaVersion === "1.1" ? { exportSnapshotId: options.exportSnapshotId ?? createProjectExportSnapshotId() } : {}),
     exportedAt,
     baseProjectId: projectId,
     baseRevision: project.revision ?? 1,
@@ -70,13 +85,43 @@ export function stringifyCanonicalProjectExport(projectPackage: ProjectExportPac
 }
 
 export async function hashProjectExport(projectPackage: ProjectExportPackage) {
-  const canonical = stableStringify(projectPackage);
+  return calculateProjectExportHashFromString(stableStringify(projectPackage));
+}
 
-  if (globalThis.crypto?.subtle) {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+export async function calculateProjectExportHashFromString(canonical: string) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("SHA-256 hashing is not available in this environment.");
   }
 
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function hashProjectExportJson(packageJson: string) {
+  return calculateProjectExportHashFromString(stableStringify(JSON.parse(packageJson)));
+}
+
+export function getUtf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+export function assertProjectSnapshotSize(packageJson: string) {
+  if (getUtf8ByteLength(packageJson) > maxProjectSnapshotBytes) {
+    throw new Error("project_snapshot_too_large");
+  }
+}
+
+export function getProjectExportStructuralValue(projectPackage: ProjectExportPackage) {
+  const { packageId: _packageId, exportSnapshotId: _exportSnapshotId, exportedAt: _exportedAt, ...structuralPackage } = projectPackage;
+  return structuralPackage;
+}
+
+export async function hashProjectExportStructuralState(projectPackage: ProjectExportPackage) {
+  return calculateProjectExportHashFromString(stableStringify(getProjectExportStructuralValue(projectPackage)));
+}
+
+export function getProjectExportHashPreview(projectPackage: ProjectExportPackage) {
+  const canonical = stableStringify(projectPackage);
   let hash = 0;
   for (let index = 0; index < canonical.length; index += 1) {
     hash = (Math.imul(31, hash) + canonical.charCodeAt(index)) | 0;

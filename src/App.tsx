@@ -42,6 +42,7 @@ import {
 import { PaymentCancelPage } from "./pages/PaymentCancelPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
 import { ProjectImportPage } from "./pages/ProjectImportPage";
+import { ProjectUpdatePage } from "./pages/ProjectUpdatePage";
 import { SystemTestsPage } from "./pages/SystemTestsPage";
 import { TestPage } from "./pages/TestPage";
 import {
@@ -50,8 +51,10 @@ import {
   ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
+import { GlobalNavigation } from "./components/layout/GlobalNavigation";
 import {
   buildProjectPath,
+  buildProjectUpdatePath,
   buildProjectVersionHistoryPath,
   defaultProjectTab,
   legacyProjectRouteMap,
@@ -89,7 +92,12 @@ import {
   updateTaskDependencyInFirestore,
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
-import { createCanonicalProjectExport, hashProjectExport, stringifyCanonicalProjectExport } from "./exports/projectExport";
+import {
+  createCanonicalProjectExport,
+  createProjectExportSnapshotId,
+  hashProjectExport,
+  stringifyCanonicalProjectExport
+} from "./exports/projectExport";
 import {
   loadAdminPreviewRole,
   loadSelectedProjectId,
@@ -150,6 +158,7 @@ export type ProjectPageProps = {
   onResetProjectState: () => void;
   onSeedProjectState: () => void;
   onProjectImported: (projectId: string) => Promise<void>;
+  onProjectUpdated: (projectId: string) => Promise<void>;
   onExportProject: (projectId: string) => Promise<void>;
   onNavigate: (path: string, options?: { replace?: boolean }) => void;
   onProjectChange: (projectId: string) => void;
@@ -190,6 +199,26 @@ function getRoute(props: ProjectPageProps, pathname: string) {
 
   if (projectRoute.type === "import") {
     return <ProjectImportPage {...props} />;
+  }
+
+  if (projectRoute.type === "update") {
+    return <ProjectUpdatePage {...props} />;
+  }
+
+  if (projectRoute.type === "legacy-project-import") {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h1>Project import route changed</h1>
+            <p>Selected-project file workflows now use Update via File. Import New Project remains available from the portfolio.</p>
+          </div>
+          <button className="action-button" type="button" onClick={() => props.onNavigate(buildProjectUpdatePath(projectRoute.projectId ?? props.selectedProjectId), { replace: true })}>
+            Open Update via File
+          </button>
+        </div>
+      </section>
+    );
   }
 
   if (projectRoute.type === "version-history") {
@@ -319,69 +348,6 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   }
 
   return <DashboardPage {...props} />;
-}
-
-function isActiveRoute(href: string, pathname: string) {
-  const path = pathname;
-
-  if (href === "/") {
-    return path === "/";
-  }
-
-  if (href === "/projects") {
-    return path === "/projects" || path.startsWith("/projects/");
-  }
-
-  return path === href || (href === "/system-tests" && (path === "/admin" || path === "/test"));
-}
-
-function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: (path: string) => void }) {
-  function renderNavItem(item: typeof primaryNavItems[number]) {
-    const Icon = item.icon;
-    const active = isActiveRoute(item.href, pathname);
-
-    return (
-      <a
-        className={active ? "sidebar-link active" : "sidebar-link"}
-        href={item.href}
-        key={item.href}
-        onClick={(event) => {
-          event.preventDefault();
-          onNavigate(item.href);
-        }}
-      >
-        <Icon size={18} aria-hidden="true" />
-        <span>{item.label}</span>
-      </a>
-    );
-  }
-
-  return (
-    <aside className="sidebar">
-      <a
-        className="sidebar-brand"
-        href="/"
-        onClick={(event) => {
-          event.preventDefault();
-          onNavigate("/");
-        }}
-      >
-        <span className="brand-logo">
-          <img src={accelLogo} alt="AccelProjects" />
-        </span>
-        <span>
-          <strong>AccelProjects</strong>
-          <small>Project Operations</small>
-        </span>
-      </a>
-      <nav className="sidebar-nav">
-        {primaryNavItems.map(renderNavItem)}
-      </nav>
-      <nav className="sidebar-nav sidebar-utility-nav" aria-label="Utilities">
-        {utilityNavItems.map(renderNavItem)}
-      </nav>
-    </aside>
-  );
 }
 
 function TopHeader({
@@ -539,8 +505,8 @@ function ProjectContextBar({
               Version History
             </button>
             {canManage ? (
-              <button type="button" disabled title="Update import is planned for the next safe-import phase.">
-                Update via File - planned next
+              <button type="button" onClick={() => onNavigate(buildProjectUpdatePath(project.id))}>
+                Update via File
               </button>
             ) : null}
           </div>
@@ -592,6 +558,7 @@ function AppShell() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [pathname, setPathname] = useState(() => window.location.pathname);
+  const [globalNavCollapsed, setGlobalNavCollapsed] = useState(() => window.matchMedia?.("(max-width: 1180px)").matches ?? false);
 
   useEffect(() => {
     const handlePopState = () => setPathname(window.location.pathname);
@@ -681,11 +648,11 @@ function AppShell() {
   }
 
   const projectRoute = parseProjectRoute(pathname);
-  const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
+  const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
   const routeProject = routeProjectId ? projectState.projects.find((project) => project.id === routeProjectId) : undefined;
   const selectedProject = routeProject ?? projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
   const activeProjectTab = projectRoute.type === "workspace" ? projectRoute.tab ?? defaultProjectTab : defaultProjectTab;
-  const routeIsValidProjectWorkspace = (projectRoute.type === "workspace" || projectRoute.type === "version-history") && Boolean(routeProject);
+  const routeIsValidProjectWorkspace = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import") && Boolean(routeProject);
   const projectPhases = useMemo(
     () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id),
     [projectState.phases, selectedProject?.id]
@@ -702,7 +669,7 @@ function AppShell() {
   const clientPreview = role === "client";
   const editable = permissions.canEditTasks && !clientPreview;
   const manageable = permissions.canManageProjects && !clientPreview;
-  const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
+  const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
   const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
   const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
 
@@ -1140,6 +1107,18 @@ function AppShell() {
     setProjectNotice("Project import completed.");
   }
 
+  async function reloadAfterProjectUpdate(projectId: string) {
+    if (!user) {
+      return;
+    }
+
+    const state = await loadProjectStateFromFirestore(user);
+    syncProjectState(state);
+    setSelectedProjectId(projectId);
+    saveSelectedProjectId(projectId);
+    setProjectNotice("Project update completed.");
+  }
+
   async function exportProject(projectId: string) {
     if (!manageable) {
       setProjectError("Your Firestore profile role does not allow exporting this project.");
@@ -1148,14 +1127,16 @@ function AppShell() {
 
     try {
       const exportState = user ? await loadProjectStateFromFirestore(user) : projectState;
-      const projectPackage = createCanonicalProjectExport(exportState, projectId);
+      const projectPackage = createCanonicalProjectExport(exportState, projectId, new Date().toISOString(), {
+        exportSnapshotId: createProjectExportSnapshotId()
+      });
       const packageJson = stringifyCanonicalProjectExport(projectPackage);
       const sourceHash = await hashProjectExport(projectPackage);
       await createProjectExportSnapshotInFirestore({
         projectId,
-        packageId: projectPackage.packageId,
         sourceHash,
-        packageJson
+        packageJson,
+        projectPackage
       });
 
       syncProjectState(exportState);
@@ -1211,6 +1192,7 @@ function AppShell() {
     onResetProjectState: resetProjectState,
     onSeedProjectState: seedProjectState,
     onProjectImported: reloadAfterProjectImport,
+    onProjectUpdated: reloadAfterProjectUpdate,
     onExportProject: exportProject,
     onNavigate: navigate,
     onProjectChange: (projectId: string) => {
@@ -1241,7 +1223,15 @@ function AppShell() {
   if (projectLoading) {
     return (
       <div className="app-shell">
-        <Sidebar pathname={pathname} onNavigate={navigate} />
+        <GlobalNavigation
+          pathname={pathname}
+          primaryItems={primaryNavItems}
+          utilityItems={utilityNavItems}
+          collapsed={globalNavCollapsed}
+          brandLogo={accelLogo}
+          onCollapsedChange={setGlobalNavCollapsed}
+          onNavigate={navigate}
+        />
         <div className="main-shell">
           <TopHeader
             user={user}
@@ -1273,7 +1263,15 @@ function AppShell() {
 
   return (
     <div className="app-shell">
-      <Sidebar pathname={pathname} onNavigate={navigate} />
+      <GlobalNavigation
+        pathname={pathname}
+        primaryItems={primaryNavItems}
+        utilityItems={utilityNavItems}
+        collapsed={globalNavCollapsed}
+        brandLogo={accelLogo}
+        onCollapsedChange={setGlobalNavCollapsed}
+        onNavigate={navigate}
+      />
       <div className="main-shell">
         <TopHeader
           user={user}

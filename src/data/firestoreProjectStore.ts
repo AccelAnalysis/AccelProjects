@@ -15,6 +15,13 @@ import {
 import { auth, db } from "../firebase";
 import { initialProjectState, mockOrganization } from "./projectMockData";
 import { validateDependencies } from "../scheduling/dependencyGraph";
+import {
+  assertProjectSnapshotSize,
+  hashProjectExportJson,
+  stringifyCanonicalProjectExport,
+  type ProjectExportPackage
+} from "../exports/projectExport";
+import type { ProjectUpdatePlan } from "../updates/projectUpdateTypes";
 import type {
   Client,
   Milestone,
@@ -27,6 +34,7 @@ import type {
   ProjectMetric,
   ProjectRisk,
   ProjectState,
+  ProjectUpdateManifest,
   ProjectVersion,
   Task,
   TaskComment,
@@ -37,7 +45,7 @@ import type {
 export const FIRESTORE_ORGANIZATION_ID = "org_accel_projects";
 
 type CollectionKey = keyof ProjectState;
-type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectVersions" | "projectExportSnapshots";
+type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
 
 const rootCollectionMap = {
   users: "users",
@@ -56,7 +64,8 @@ const projectCollectionMap = {
   metrics: "metrics",
   activityEvents: "activityEvents",
   projectVersions: "versions",
-  projectExportSnapshots: "exportSnapshots"
+  projectExportSnapshots: "exportSnapshots",
+  projectUpdateManifests: "updateManifests"
 } satisfies Record<ProjectScopedCollectionKey, string>;
 
 function requireDb() {
@@ -100,6 +109,10 @@ function projectPath(projectId: string) {
 
 function createId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+}
+
+export function createProjectUpdateEntityId(prefix: string) {
+  return createId(prefix);
 }
 
 type ProjectMutationChange = Pick<ProjectVersion, "changeType" | "summary" | "metadata">;
@@ -652,34 +665,285 @@ export async function createScheduleActivityEventInFirestore(event: Omit<Project
 
 export async function createProjectExportSnapshotInFirestore({
   projectId,
-  packageId,
   sourceHash,
-  packageJson
-}: Pick<ProjectExportSnapshot, "projectId" | "packageId" | "sourceHash" | "packageJson">) {
+  packageJson,
+  projectPackage,
+  snapshotType = "manual_export",
+  resultRevision,
+  sourceUpdateHash,
+  sourceSnapshotId,
+  resultStateHash
+}: Pick<ProjectExportSnapshot, "projectId" | "sourceHash" | "packageJson"> & {
+  projectPackage: ProjectExportPackage;
+  snapshotType?: ProjectExportSnapshot["snapshotType"];
+  resultRevision?: number;
+  sourceUpdateHash?: string;
+  sourceSnapshotId?: string;
+  resultStateHash?: string;
+}) {
   const safeProjectId = requirePathSegment(projectId, "projectId");
   const actor = requireCurrentUser();
   const database = requireDb();
   const projectRef = doc(database, ...projectPath(safeProjectId));
-  const projectSnapshot = await getDoc(projectRef);
+  const packageHash = await hashProjectExportJson(packageJson);
 
-  if (!projectSnapshot.exists()) {
-    throw new Error(`Project ${safeProjectId} was not found in Firestore.`);
+  if (packageHash !== sourceHash) {
+    throw new Error("source_snapshot_hash_mismatch");
   }
 
-  const project = withProjectRevisionDefaults(projectSnapshot.data() as Project);
-  const snapshot: ProjectExportSnapshot = {
-    id: createId("export"),
-    projectId: safeProjectId,
-    baseRevision: project.revision ?? 1,
-    packageId,
-    sourceHash,
-    packageJson,
-    createdBy: actor.uid,
-    createdAt: new Date().toISOString()
-  };
+  assertProjectSnapshotSize(packageJson);
 
-  await setDoc(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectExportSnapshots, snapshot.id), snapshot);
-  return snapshot;
+  return runTransaction(database, async (transaction) => {
+    const projectSnapshot = await transaction.get(projectRef);
+
+    if (!projectSnapshot.exists()) {
+      throw new Error(`Project ${safeProjectId} was not found in Firestore.`);
+    }
+
+    const project = withProjectRevisionDefaults(projectSnapshot.data() as Project);
+
+    if (project.revision !== projectPackage.baseRevision) {
+      throw new Error("The project changed while the export was being prepared. Export the project again.");
+    }
+
+    if (
+      projectPackage.baseProjectId !== safeProjectId
+      || projectPackage.project.id !== safeProjectId
+      || projectPackage.project.organizationId !== project.organizationId
+    ) {
+      throw new Error("project_identity_mismatch");
+    }
+
+    const snapshot: ProjectExportSnapshot = {
+      id: projectPackage.exportSnapshotId ?? createId("export"),
+      projectId: safeProjectId,
+      baseRevision: projectPackage.baseRevision,
+      ...(typeof resultRevision === "number" ? { resultRevision } : {}),
+      packageId: projectPackage.packageId,
+      sourceHash,
+      ...(sourceUpdateHash ? { sourceUpdateHash } : {}),
+      ...(sourceSnapshotId ? { sourceSnapshotId } : {}),
+      ...(resultStateHash ? { resultStateHash } : {}),
+      snapshotType,
+      packageJson,
+      createdBy: actor.uid,
+      createdAt: new Date().toISOString()
+    };
+
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectExportSnapshots, snapshot.id), snapshot);
+    return snapshot;
+  });
+}
+
+export async function loadProjectExportSnapshotsFromFirestore(projectId: string) {
+  return readCollection<ProjectExportSnapshot>([
+    ...projectPath(requirePathSegment(projectId, "projectId")),
+    projectCollectionMap.projectExportSnapshots
+  ]);
+}
+
+export async function loadProjectUpdateManifestFromFirestore(projectId: string, uploadedFileHash: string) {
+  const snapshot = await getDoc(doc(
+    requireDb(),
+    ...projectPath(requirePathSegment(projectId, "projectId")),
+    projectCollectionMap.projectUpdateManifests,
+    requirePathSegment(uploadedFileHash, "uploadedFileHash")
+  ));
+
+  return snapshot.exists() ? snapshot.data() as ProjectUpdateManifest : null;
+}
+
+function collectionEntityMap(projectPackage: ProjectExportPackage) {
+  return {
+    phases: projectPackage.phases,
+    milestones: projectPackage.milestones,
+    tasks: projectPackage.tasks,
+    taskDependencies: projectPackage.taskDependencies,
+    risks: projectPackage.risks,
+    documents: projectPackage.documents,
+    metrics: projectPackage.metrics
+  };
+}
+
+function projectCollectionKeyForEntity(entityType: string): ProjectScopedCollectionKey {
+  if (entityType === "taskDependencies") {
+    return "taskDependencies";
+  }
+  return entityType as ProjectScopedCollectionKey;
+}
+
+export async function applyProjectUpdateFromExportInFirestore(plan: ProjectUpdatePlan) {
+  const safeProjectId = requirePathSegment(plan.projectId, "projectId");
+  const actor = requireCurrentUser();
+  const database = requireDb();
+  const now = new Date().toISOString();
+  const resultPackageJson = stringifyCanonicalProjectExport(plan.resultCanonicalPackage);
+  const resultSourceHash = await hashProjectExportJson(resultPackageJson);
+  const sourceSnapshotHash = await hashProjectExportJson(plan.sourceSnapshot.packageJson);
+
+  if (sourceSnapshotHash !== plan.sourceSnapshotHash) {
+    throw new Error("source_snapshot_hash_mismatch");
+  }
+
+  assertProjectSnapshotSize(resultPackageJson);
+
+  const fatalIssues = plan.validationIssues.filter((item) => item.severity === "error");
+  if (fatalIssues.length > 0) {
+    throw new Error(fatalIssues.map((item) => item.code).join(", "));
+  }
+
+  const resultTasks = plan.resultCanonicalPackage.tasks;
+  const resultDependencies = plan.resultCanonicalPackage.taskDependencies;
+  const dependencyIssue = getFatalDependencyValidationMessage(resultTasks, resultDependencies);
+
+  if (dependencyIssue) {
+    throw new Error(dependencyIssue);
+  }
+
+  return runTransaction(database, async (transaction) => {
+    const projectRef = doc(database, ...projectPath(safeProjectId));
+    const sourceSnapshotRef = doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectExportSnapshots, plan.sourceSnapshotId);
+    const updateManifestRef = doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectUpdateManifests, plan.uploadedFileHash);
+    const [projectSnapshot, sourceSnapshot, updateManifest] = await Promise.all([
+      transaction.get(projectRef),
+      transaction.get(sourceSnapshotRef),
+      transaction.get(updateManifestRef)
+    ]);
+
+    if (!projectSnapshot.exists()) {
+      throw new Error(`Project ${safeProjectId} was not found in Firestore.`);
+    }
+
+    const project = withProjectRevisionDefaults(projectSnapshot.data() as Project);
+
+    if (
+      project.revision !== plan.baseRevision
+      || project.lastStructuralChangeAt !== plan.currentProject.lastStructuralChangeAt
+    ) {
+      throw new Error("This project changed after the update preview was created. No changes were applied. Export the current project again and regenerate the update.");
+    }
+
+    if (!sourceSnapshot.exists()) {
+      throw new Error("unknown_export_snapshot");
+    }
+
+    const storedSourceSnapshot = sourceSnapshot.data() as ProjectExportSnapshot;
+    if (
+      storedSourceSnapshot.projectId !== safeProjectId
+      || storedSourceSnapshot.packageId !== plan.sourcePackageId
+      || storedSourceSnapshot.baseRevision !== plan.baseRevision
+      || storedSourceSnapshot.sourceHash !== plan.sourceSnapshotHash
+    ) {
+      throw new Error("source_snapshot_hash_mismatch");
+    }
+
+    if (updateManifest.exists()) {
+      throw new Error("This update file has already been applied to this project.");
+    }
+
+    const resultRevision = plan.baseRevision + 1;
+    const version: ProjectVersion = {
+      id: createId("version"),
+      projectId: safeProjectId,
+      revision: resultRevision,
+      previousRevision: plan.baseRevision,
+      changeType: "project_file_updated",
+      summary: plan.humanSummary,
+      actorId: actor.uid,
+      metadata: {
+        sourceSnapshotId: plan.sourceSnapshotId,
+        sourcePackageId: plan.sourcePackageId,
+        baseRevision: plan.baseRevision,
+        uploadedFileHash: plan.uploadedFileHash,
+        resultStateHash: plan.resultStateHash,
+        addedCount: plan.changeCounts.added,
+        modifiedCount: plan.changeCounts.modified,
+        removedCount: plan.changeCounts.removed,
+        countsByEntityType: plan.changeCounts.byEntityType,
+        temporaryIdMap: plan.temporaryIdMap,
+        warningCount: plan.warnings.length,
+        resultSnapshotId: plan.resultCanonicalPackage.exportSnapshotId
+      },
+      createdAt: now
+    };
+    const activity: ProjectActivityEvent = {
+      id: createId("event"),
+      projectId: safeProjectId,
+      actorId: actor.uid,
+      type: "project_file_updated",
+      message: plan.humanSummary,
+      metadata: {
+        versionId: version.id,
+        uploadedFileHash: plan.uploadedFileHash,
+        resultStateHash: plan.resultStateHash
+      },
+      createdAt: now
+    };
+    const manifest: ProjectUpdateManifest = {
+      id: plan.uploadedFileHash,
+      organizationId: FIRESTORE_ORGANIZATION_ID,
+      projectId: safeProjectId,
+      sourceSnapshotId: plan.sourceSnapshotId,
+      sourcePackageId: plan.sourcePackageId,
+      sourceSnapshotHash: plan.sourceSnapshotHash,
+      uploadedFileHash: plan.uploadedFileHash,
+      resultStateHash: plan.resultStateHash,
+      baseRevision: plan.baseRevision,
+      resultRevision,
+      versionId: version.id,
+      actorId: actor.uid,
+      appliedAt: now,
+      changeCounts: plan.changeCounts
+    };
+    const resultSnapshotRecord: ProjectExportSnapshot = {
+      id: plan.resultCanonicalPackage.exportSnapshotId ?? createId("result"),
+      projectId: safeProjectId,
+      baseRevision: resultRevision,
+      resultRevision,
+      packageId: plan.resultCanonicalPackage.packageId,
+      sourceHash: resultSourceHash,
+      sourceUpdateHash: plan.uploadedFileHash,
+      sourceSnapshotId: plan.sourceSnapshotId,
+      resultStateHash: plan.resultStateHash,
+      snapshotType: "revision_result",
+      createdBy: actor.uid,
+      createdAt: now,
+      packageJson: resultPackageJson
+    };
+    const resultCollections = collectionEntityMap(plan.resultCanonicalPackage);
+    const originalCollections = collectionEntityMap(plan.originalPackage);
+
+    transaction.update(projectRef, {
+      ...plan.projectPatch,
+      revision: resultRevision,
+      updatedAt: now,
+      lastStructuralChangeAt: now
+    });
+
+    Object.entries(resultCollections).forEach(([entityType, items]) => {
+      const key = projectCollectionKeyForEntity(entityType);
+      items.forEach((item) => {
+        transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap[key], item.id), item);
+      });
+    });
+
+    Object.entries(originalCollections).forEach(([entityType, items]) => {
+      const key = projectCollectionKeyForEntity(entityType);
+      const retainedIds = new Set((resultCollections as Record<string, Array<{ id: string }>>)[entityType].map((item) => item.id));
+      items.forEach((item) => {
+        if (!retainedIds.has(item.id)) {
+          transaction.delete(doc(database, ...projectPath(safeProjectId), projectCollectionMap[key], item.id));
+        }
+      });
+    });
+
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectVersions, version.id), version);
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.activityEvents, activity.id), activity);
+    transaction.set(updateManifestRef, manifest);
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectExportSnapshots, resultSnapshotRecord.id), resultSnapshotRecord);
+
+    return { version, manifest, resultSnapshot: resultSnapshotRecord, activity };
+  });
 }
 
 export async function addTaskCommentInFirestore(taskId: string, comment: Omit<TaskComment, "id" | "taskId" | "createdAt">) {

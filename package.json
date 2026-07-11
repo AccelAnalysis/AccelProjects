@@ -7,7 +7,8 @@
     "dev": "concurrently \"npm run api\" \"npm run web\"",
     "web": "vite --host 0.0.0.0",
     "api": "node server/index.js",
-    "test": "vitest run",
+    "test": "vitest run src",
+    "test:rules": "firebase emulators:exec --only firestore \"vitest run firestore.rules.test.ts\"",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -25,6 +26,7 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

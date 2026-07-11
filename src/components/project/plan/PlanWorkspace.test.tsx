@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Milestone, Phase, Project, Task, TaskDependency, User } from "../../../types";
-import { PlanWorkspace } from "./PlanWorkspace";
+import { todayDateOnly } from "../../../utils/dateOnly";
+import { planRowHeight, PlanWorkspace } from "./PlanWorkspace";
 
 class TestResizeObserver {
   observe() {}
@@ -55,11 +56,22 @@ describe("PlanWorkspace rendered regressions", () => {
     expect(screen.getByRole("button", { name: "Filter" })).toBeInTheDocument();
     expect(screen.getByLabelText("Timeline zoom")).toHaveValue("week");
     expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Task" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Task title")).not.toBeInTheDocument();
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Dependency target for First task")).not.toBeInTheDocument();
     expect(screen.getByText("Feb 5-Feb 8")).toBeInTheDocument();
+  });
+
+  it("keeps hierarchy and timeline rows aligned through the shared row-height contract", () => {
+    const { container } = renderPlan();
+    const gridScroll = container.querySelector(".plan-grid-scroll");
+    const hierarchyBody = container.querySelector<HTMLElement>(".plan-hierarchy-body");
+    const timelineBody = container.querySelector<HTMLElement>(".plan-timeline-body");
+
+    expect(gridScroll).toHaveAttribute("data-plan-row-height", String(planRowHeight));
+    expect(hierarchyBody?.style.height).toBe(timelineBody?.style.height);
+    expect(container.querySelectorAll(".plan-hierarchy-row")).toHaveLength(container.querySelectorAll(".plan-timeline-row").length);
   });
 
   it("uses filter disclosure with human-readable chips", async () => {
@@ -93,14 +105,22 @@ describe("PlanWorkspace rendered regressions", () => {
     expect(container.querySelectorAll(".dependency-path")).toHaveLength(1);
   });
 
-  it("opens contextual creation drawers from the New menu", async () => {
+  it("opens contextual creation drawers from the primary Add Task action", async () => {
     const { user } = renderPlan();
 
-    await user.click(screen.getByRole("button", { name: "New" }));
-    await user.click(screen.getByRole("menuitem", { name: "New Task" }));
+    await user.click(screen.getByRole("button", { name: "Add Task" }));
 
     expect(screen.getByRole("dialog", { name: "New task" })).toBeInTheDocument();
     expect(screen.getByLabelText("Task title")).toBeInTheDocument();
+  });
+
+  it("opens milestone creation from the secondary workbench action", async () => {
+    const { user } = renderPlan();
+
+    await user.click(screen.getByRole("button", { name: "Add Milestone" }));
+
+    expect(screen.getByRole("dialog", { name: "New milestone" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Milestone name")).toBeInTheDocument();
   });
 
   it("moves and resizes task bars through the rendered timeline confirmation flow", async () => {
@@ -122,6 +142,64 @@ describe("PlanWorkspace rendered regressions", () => {
       startDate: "2028-02-05",
       dueDate: "2028-02-10"
     });
+  });
+
+  it("opens the same task context from hierarchy rows and Gantt bars", async () => {
+    const onOpenTask = vi.fn();
+    const { user } = renderPlan({ onOpenTask });
+
+    await user.click(screen.getByTitle("First task"));
+
+    expect(onOpenTask).toHaveBeenCalledWith("task_a");
+    expect(screen.getByRole("row", { name: /First task/ })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByLabelText(/^Open task: Second task/));
+
+    expect(onOpenTask).toHaveBeenLastCalledWith("task_b");
+    expect(screen.getByRole("row", { name: /Second task/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("collapsing a phase removes matching hierarchy and timeline child rows together", async () => {
+    const { container, user } = renderPlan();
+
+    expect(screen.getByRole("row", { name: /First task/ })).toBeInTheDocument();
+    expect(container.querySelectorAll(".plan-hierarchy-row")).toHaveLength(container.querySelectorAll(".plan-timeline-row").length);
+
+    await user.click(screen.getByRole("button", { name: /1\. Build/ }));
+
+    expect(screen.queryByRole("row", { name: /First task/ })).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".plan-hierarchy-row")).toHaveLength(container.querySelectorAll(".plan-timeline-row").length);
+  });
+
+  it("filters corresponding rows from both panes and keeps zoom controls active", async () => {
+    const { container, user } = renderPlan();
+
+    await user.type(screen.getByLabelText("Search"), "Second");
+
+    expect(screen.queryByRole("row", { name: /First task/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Second task/ })).toBeInTheDocument();
+    expect(container.querySelectorAll(".plan-hierarchy-row")).toHaveLength(container.querySelectorAll(".plan-timeline-row").length);
+
+    await user.selectOptions(screen.getByLabelText("Timeline zoom"), "month");
+
+    expect(screen.getByLabelText("Timeline zoom")).toHaveValue("month");
+  });
+
+  it("Today action scrolls the synchronized workbench when today is visible", async () => {
+    const today = todayDateOnly();
+    const todayProject = makeProject({ startDate: today, targetDate: today });
+    const todayPhase = makePhase({ projectId: todayProject.id, startDate: today, endDate: today });
+    const todayTask = makeTask({ projectId: todayProject.id, phaseId: todayPhase.id, startDate: today, dueDate: today });
+    const { user } = renderPlan({
+      project: todayProject,
+      phases: [todayPhase],
+      tasks: [todayTask],
+      milestones: []
+    });
+
+    await user.click(screen.getByRole("button", { name: "Today" }));
+
+    expect(Element.prototype.scrollTo).toHaveBeenCalled();
   });
 
   it("updates milestones with rendered confirmation before persistence", async () => {
@@ -206,7 +284,7 @@ describe("PlanWorkspace rendered regressions", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Search")).toHaveValue(""));
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
-    expect(screen.getByText("Second project task")).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Second project task/ })).toBeInTheDocument();
   });
 
   it("renders permission restrictions for read-only schedule users", () => {
