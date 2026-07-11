@@ -62,6 +62,7 @@ const projectCollectionMap = {
   projectVersions: "versions"
 };
 const maxBatchWrites = 450;
+type FirestorePath = [string, ...string[]];
 
 type WriteOperation = {
   ref: DocumentReference<DocumentData>;
@@ -92,12 +93,22 @@ function requirePathSegment(value: unknown, label: string): string {
   return value;
 }
 
-function organizationPath() {
-  return ["organizations", FIRESTORE_ORGANIZATION_ID];
+function validatePathSegments(pathSegments: unknown[]): FirestorePath {
+  const segments = pathSegments.map((segment, index) => requirePathSegment(segment, `path[${index}]`));
+
+  if (segments.length === 0) {
+    throw new Error("Missing Firestore path.");
+  }
+
+  return [segments[0], ...segments.slice(1)];
 }
 
-function projectPath(projectId: string) {
-  return [...organizationPath(), rootCollectionMap.projects, requirePathSegment(projectId, "projectId")];
+function organizationPath(): FirestorePath {
+  return validatePathSegments(["organizations", FIRESTORE_ORGANIZATION_ID]);
+}
+
+function projectPath(projectId: string): FirestorePath {
+  return validatePathSegments([...organizationPath(), rootCollectionMap.projects, requirePathSegment(projectId, "projectId")]);
 }
 
 function createId(prefix: string) {
@@ -323,7 +334,7 @@ export async function importProjectPackageToFirestore({
       userId,
       role: resolution?.projectRole ?? "contributor"
     };
-    writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.projectMembers, member.id), value: member });
+    writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.projectMembers, userId), value: member });
   });
 
   const normalizedImportPhases = normalizePhaseSortOrder(projectPackage.phases.map((phase) => ({

@@ -109,6 +109,14 @@ export type PaymentLogInput = Omit<PaymentLog, "id" | "createdAt">;
 
 export type UserRole = "admin" | "project_manager" | "contributor" | "client" | "viewer";
 
+export type NotificationPreferences = {
+  taskAssignments: boolean;
+  dueDates: boolean;
+  risks: boolean;
+  projectMessages: boolean;
+  emailDelivery: boolean;
+};
+
 export type User = {
   id: string;
   organizationId: string;
@@ -116,6 +124,7 @@ export type User = {
   email: string;
   role: UserRole;
   avatarInitials: string;
+  notificationPreferences?: NotificationPreferences;
   createdAt?: string;
   updatedAt?: string;
 };

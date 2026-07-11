@@ -24,6 +24,11 @@ service cloud.firestore {
       return isOrgMember(organizationId) && signedInUserRole(organizationId) == "admin";
     }
 
+    function isInternalOrgMember(organizationId) {
+      return isOrgMember(organizationId)
+        && !(signedInUserRole(organizationId) in ["client"]);
+    }
+
     function canWriteProjectData(organizationId) {
       return isOrgMember(organizationId)
         && signedInUserRole(organizationId) in ["admin", "project_manager"];
@@ -43,6 +48,16 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)).data;
     }
 
+    function projectExists(organizationId, projectId) {
+      return projectId is string
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId));
+    }
+
+    function isProjectMemberByUserId(organizationId, projectId, userId) {
+      return exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.userId == userId;
+    }
+
     function isProjectOwnerManager(organizationId, projectId) {
       return isProjectManagerRole(organizationId)
         && projectData(organizationId, projectId).ownerId == request.auth.uid;
@@ -50,16 +65,46 @@ service cloud.firestore {
 
     function isProjectLeadManager(organizationId, projectId) {
       return isProjectManagerRole(organizationId)
-        && exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(request.auth.uid))
+        && isProjectMemberByUserId(organizationId, projectId, request.auth.uid)
         && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(request.auth.uid)).data.role == "lead";
+    }
+
+    function canReadProject(organizationId, projectId) {
+      return isSignedIn()
+        && isAccelOrg(organizationId)
+        && projectExists(organizationId, projectId)
+        && (
+          isAdmin(organizationId)
+          || (
+            isInternalOrgMember(organizationId)
+            && (
+              projectData(organizationId, projectId).ownerId == request.auth.uid
+              || isProjectMemberByUserId(organizationId, projectId, request.auth.uid)
+            )
+          )
+        );
+    }
+
+    function canListProject(organizationId) {
+      return isSignedIn()
+        && isAccelOrg(organizationId)
+        && (
+          isAdmin(organizationId)
+          || (
+            isInternalOrgMember(organizationId)
+            && ("ownerId" in resource.data)
+            && resource.data.ownerId is string
+            && resource.data.ownerId == request.auth.uid
+          )
+        );
     }
 
     function canManageProjectSchedule(organizationId, projectId) {
       return isAdmin(organizationId) || isProjectOwnerManager(organizationId, projectId) || isProjectLeadManager(organizationId, projectId);
     }
 
-    function canWriteProjectRevisionFields(organizationId) {
-      return (canWriteProjectData(organizationId) || isContributorRole(organizationId))
+    function canWriteProjectRevisionFields(organizationId, projectId) {
+      return (canManageProjectSchedule(organizationId, projectId) || (isContributorRole(organizationId) && canReadProject(organizationId, projectId)))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "revision",
           "updatedAt",
@@ -117,25 +162,127 @@ service cloud.firestore {
         && request.resource.data.organizationId == organizationId
         && request.resource.data.email is string
         && request.resource.data.name is string
+        && request.resource.data.role == "viewer"
+        && request.resource.data.avatarInitials is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.updatedAt is string
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "organizationId",
+          "email",
+          "name",
+          "role",
+          "avatarInitials",
+          "createdAt",
+          "updatedAt",
+          "notificationPreferences"
+        ])
+        && (!("notificationPreferences" in request.resource.data) || validNotificationPreferences(request.resource.data.notificationPreferences));
+    }
+
+    function validNotificationPreferences(preferences) {
+      return preferences is map
+        && preferences.keys().hasOnly([
+          "taskAssignments",
+          "dueDates",
+          "risks",
+          "projectMessages",
+          "emailDelivery"
+        ])
+        && (!("taskAssignments" in preferences) || preferences.taskAssignments is bool)
+        && (!("dueDates" in preferences) || preferences.dueDates is bool)
+        && (!("risks" in preferences) || preferences.risks is bool)
+        && (!("projectMessages" in preferences) || preferences.projectMessages is bool)
+        && (!("emailDelivery" in preferences) || preferences.emailDelivery is bool);
+    }
+
+    function validUserProfileShape(organizationId, userId) {
+      return request.resource.data.id == userId
+        && request.resource.data.organizationId == organizationId
+        && request.resource.data.email is string
+        && request.resource.data.name is string
         && request.resource.data.role in ["admin", "project_manager", "contributor", "client", "viewer"]
         && request.resource.data.avatarInitials is string
         && request.resource.data.createdAt is string
-        && request.resource.data.updatedAt is string;
+        && request.resource.data.updatedAt is string
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "organizationId",
+          "email",
+          "name",
+          "role",
+          "avatarInitials",
+          "createdAt",
+          "updatedAt",
+          "notificationPreferences"
+        ])
+        && (!("notificationPreferences" in request.resource.data) || validNotificationPreferences(request.resource.data.notificationPreferences));
+    }
+
+    function canUpdateOwnProfile(organizationId, userId) {
+      return isSignedIn()
+        && isAccelOrg(organizationId)
+        && userId == request.auth.uid
+        && validUserProfileShape(organizationId, userId)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.organizationId == resource.data.organizationId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "name",
+          "avatarInitials",
+          "notificationPreferences",
+          "updatedAt"
+        ]);
+    }
+
+    function canAdminWriteUserProfile(organizationId, userId) {
+      return isAdmin(organizationId)
+        && validUserProfileShape(organizationId, userId);
+    }
+
+    function validOrganizationShape(organizationId) {
+      return request.resource.data.id == organizationId
+        && request.resource.data.name is string
+        && request.resource.data.slug is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "name",
+          "slug",
+          "createdAt",
+          "updatedAt"
+        ])
+        && (!("updatedAt" in request.resource.data) || request.resource.data.updatedAt is string);
+    }
+
+    function canListOwnProjectMembership() {
+      return isSignedIn()
+        && signedInUserRole("org_accel_projects") != null
+        && ("userId" in resource.data)
+        && resource.data.userId == request.auth.uid;
     }
 
     match /organizations/{organizationId} {
-      allow create, read, update: if isSignedIn() && isAccelOrg(organizationId);
+      allow create: if isSignedIn() && isAccelOrg(organizationId) && validOrganizationShape(organizationId);
+      allow get: if isSignedIn() && isAccelOrg(organizationId);
+      allow list: if false;
+      allow update: if isAdmin(organizationId)
+        && validOrganizationShape(organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "updatedAt"]);
       allow delete: if false;
 
       match /users/{userId} {
-        allow create: if isOwnBootstrapProfile(organizationId, userId) || isOrgMember(organizationId);
-        allow get: if (isSignedIn() && isAccelOrg(organizationId) && userId == request.auth.uid) || isOrgMember(organizationId);
-        allow list: if isOrgMember(organizationId);
-        allow update, delete: if isOrgMember(organizationId);
+        allow create: if isOwnBootstrapProfile(organizationId, userId) || canAdminWriteUserProfile(organizationId, userId);
+        allow get: if (isSignedIn() && isAccelOrg(organizationId) && userId == request.auth.uid) || isInternalOrgMember(organizationId);
+        allow list: if isInternalOrgMember(organizationId);
+        allow update: if canUpdateOwnProfile(organizationId, userId) || canAdminWriteUserProfile(organizationId, userId);
+        allow delete: if isAdmin(organizationId) && userId != request.auth.uid;
       }
 
       match /clients/{clientId} {
-        allow read: if isOrgMember(organizationId);
+        allow read: if isInternalOrgMember(organizationId);
         allow create, update: if canWriteProjectData(organizationId);
         allow delete: if isAdmin(organizationId);
       }
@@ -143,80 +290,83 @@ service cloud.firestore {
       match /imports/{importId} {
         // MVP import manifests are written by the signed-in client after role checks in the app.
         // Firestore still limits manifest writes to admin and project_manager org members.
-        allow read: if isOrgMember(organizationId);
+        allow read: if isInternalOrgMember(organizationId);
         allow create, update: if canWriteProjectData(organizationId);
         allow delete: if false;
       }
 
       match /projects/{projectId} {
-        allow read: if isOrgMember(organizationId);
+        allow get: if canReadProject(organizationId, projectId);
+        allow list: if canListProject(organizationId);
         allow create: if canWriteProjectData(organizationId);
         allow update: if canManageProjectSchedule(organizationId, projectId)
-          || canWriteProjectRevisionFields(organizationId);
+          || canWriteProjectRevisionFields(organizationId, projectId);
         allow delete: if isAdmin(organizationId);
 
         match /members/{memberId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId)
+            || (isSignedIn() && resource.data.userId == request.auth.uid);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /phases/{phaseId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /tasks/{taskId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow delete: if canManageProjectSchedule(organizationId, projectId);
           allow update: if canManageProjectSchedule(organizationId, projectId)
             || canContributorUpdateAssignedTask(organizationId);
 
           match /comments/{commentId} {
-            allow read, write: if isOrgMember(organizationId);
+            allow read: if canReadProject(organizationId, projectId);
+            allow write: if canReadProject(organizationId, projectId);
           }
         }
 
         match /taskDependencies/{dependencyId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /risks/{riskId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /documents/{documentId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /metrics/{metricId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /milestones/{milestoneId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if canManageProjectSchedule(organizationId, projectId);
         }
 
         match /activityEvents/{eventId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canWriteProjectData(organizationId);
           allow update, delete: if false;
         }
 
         match /versions/{versionId} {
-          allow read: if isOrgMember(organizationId);
+          allow read: if canReadProject(organizationId, projectId);
           allow create: if canCreateProjectVersion(organizationId, projectId);
           allow update, delete: if false;
         }
@@ -233,6 +383,10 @@ service cloud.firestore {
           allow update, delete: if false;
         }
       }
+    }
+
+    match /{membershipPath=**}/members/{memberId} {
+      allow list: if canListOwnProjectMembership();
     }
 
     match /{document=**} {

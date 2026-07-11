@@ -80,6 +80,9 @@ export function ProjectUpdatePage({
     );
   }
 
+  const activeProject = project;
+  const activeUserProfile = userProfile;
+
   async function validateText(text: string) {
     setLoading(true);
     setApplyError("");
@@ -90,9 +93,9 @@ export function ProjectUpdatePage({
     setRemovalAcknowledged(false);
 
     try {
-      const snapshots = await loadProjectExportSnapshotsFromFirestore(project.id);
+      const snapshots = await loadProjectExportSnapshotsFromFirestore(activeProject.id);
       const source = await verifyProjectUpdateSource({
-        projectId: project.id,
+        projectId: activeProject.id,
         rawText: text,
         snapshots,
         currentState: projectState
@@ -100,7 +103,7 @@ export function ProjectUpdatePage({
       const nextIssues = [...source.issues];
 
       if (source.uploadedFileHash) {
-        const existingManifest = await loadProjectUpdateManifestFromFirestore(project.id, source.uploadedFileHash);
+        const existingManifest = await loadProjectUpdateManifestFromFirestore(activeProject.id, source.uploadedFileHash);
         if (existingManifest) {
           nextIssues.push({
             severity: "error",
@@ -110,14 +113,14 @@ export function ProjectUpdatePage({
         }
       }
 
-      if (source.uploadedPackage && source.originalPackage && source.sourceSnapshot && userProfile) {
+      if (source.uploadedPackage && source.originalPackage && source.sourceSnapshot) {
         const nextPlan = await createProjectUpdatePlan({
-          projectId: project.id,
+          projectId: activeProject.id,
           originalPackage: source.originalPackage,
           uploadedPackage: source.uploadedPackage,
           sourceSnapshot: source.sourceSnapshot,
           currentState: projectState,
-          currentUser: userProfile,
+          currentUser: activeUserProfile,
           uploadedFileHash: source.uploadedFileHash,
           generateId: (entityType, temporaryId) => createProjectUpdateEntityId(`${entityType}_${temporaryId.replace(/^new_/, "")}`)
         });
@@ -170,7 +173,7 @@ export function ProjectUpdatePage({
     try {
       const applyResult = await applyProjectUpdateFromExportInFirestore(plan);
       setResult(applyResult);
-      await onProjectUpdated(project.id);
+      await onProjectUpdated(activeProject.id);
     } catch (error) {
       setApplyError(getFirestorePermissionMessage(error));
     } finally {

@@ -1,6 +1,7 @@
 import express from "express";
 import "dotenv/config";
 import Stripe from "stripe";
+import { createFirebaseAuthMiddleware, requireRoles } from "./apiAuth.js";
 import { orderReceivedTemplate } from "./emailTemplates.js";
 import { sendMicrosoftEmail } from "./microsoftGraphEmailService.js";
 import { getMicrosoftGraphAccessToken } from "./microsoftGraphAuthService.js";
@@ -31,6 +32,8 @@ const allowedPaymentStatuses = ["unpaid", "pending", "paid", "failed", "canceled
 
 const app = express();
 const port = process.env.API_PORT || 5174;
+const requireFirebaseAuth = createFirebaseAuthMiddleware();
+const requireAdmin = requireRoles(["admin"]);
 
 function getStripeClient() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -221,7 +224,7 @@ app.get("/api/health", (_request, response) => {
   });
 });
 
-app.get("/api/email/microsoft-config-check", (_request, response) => {
+app.get("/api/email/microsoft-config-check", requireFirebaseAuth, requireAdmin, (_request, response) => {
   const result = validateMicrosoftEmailConfig();
 
   response.json({
@@ -232,7 +235,7 @@ app.get("/api/email/microsoft-config-check", (_request, response) => {
   });
 });
 
-app.get("/api/email/microsoft-token-check", async (_request, response) => {
+app.get("/api/email/microsoft-token-check", requireFirebaseAuth, requireAdmin, async (_request, response) => {
   try {
     await getMicrosoftGraphAccessToken();
 
@@ -248,13 +251,15 @@ app.get("/api/email/microsoft-token-check", async (_request, response) => {
   }
 });
 
-app.get("/api/sms/twilio-config-check", (_request, response) => {
+app.get("/api/sms/twilio-config-check", requireFirebaseAuth, requireAdmin, (_request, response) => {
   response.json(validateTwilioSmsConfig());
 });
 
-app.get("/api/payments/stripe-config-check", (_request, response) => {
+app.get("/api/payments/stripe-config-check", requireFirebaseAuth, requireAdmin, (_request, response) => {
   response.json(validateStripeConfig());
 });
+
+app.use("/api", requireFirebaseAuth);
 
 app.post("/api/orders", async (request, response) => {
   const missingFields = requireFields(request.body, ["customerName", "email", "phone", "service", "amount"]);
@@ -806,7 +811,7 @@ app.post("/api/orders/:id/send-order-received-sms/twilio", async (request, respo
   response.status(result.success ? 201 : 400).json(result);
 });
 
-app.post("/api/test-email/mock", async (request, response) => {
+app.post("/api/test-email/mock", requireAdmin, async (request, response) => {
   try {
     const result = await sendEmail({
       to: request.body.to,
@@ -824,7 +829,7 @@ app.post("/api/test-email/mock", async (request, response) => {
   }
 });
 
-app.post("/api/test-email/microsoft", async (request, response) => {
+app.post("/api/test-email/microsoft", requireAdmin, async (request, response) => {
   const missingFields = requireFields(request.body, ["to", "subject", "body"]);
 
   if (missingFields.length > 0) {
@@ -843,7 +848,7 @@ app.post("/api/test-email/microsoft", async (request, response) => {
   response.status(result.success ? 201 : 400).json(result);
 });
 
-app.post("/api/test-email/microsoft-failure", async (_request, response) => {
+app.post("/api/test-email/microsoft-failure", requireAdmin, async (_request, response) => {
   const result = await sendMicrosoftEmail({
     to: "not-an-email",
     subject: "Mini Billing Messenger Microsoft 365 Failure Test",
@@ -853,7 +858,7 @@ app.post("/api/test-email/microsoft-failure", async (_request, response) => {
   response.status(400).json(result);
 });
 
-app.post("/api/test-sms/mock", async (request, response) => {
+app.post("/api/test-sms/mock", requireAdmin, async (request, response) => {
   try {
     const result = await sendSms({
       to: request.body.to,
@@ -871,7 +876,7 @@ app.post("/api/test-sms/mock", async (request, response) => {
   }
 });
 
-app.post("/api/test-sms/twilio", async (request, response) => {
+app.post("/api/test-sms/twilio", requireAdmin, async (request, response) => {
   if (request.body.smsConsent === undefined || request.body.smsConsent === null) {
     const smsLog = await createSmsLogRecord({
       orderId: "twilio_sms",
@@ -901,6 +906,10 @@ app.post("/api/test-sms/twilio", async (request, response) => {
   response.status(result.success ? 201 : 400).json(result);
 });
 
-app.listen(port, () => {
-  console.log(`Mini Billing Messenger API running at http://localhost:${port}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(port, () => {
+    console.log(`Mini Billing Messenger API running at http://localhost:${port}`);
+  });
+}
+
+export { app };

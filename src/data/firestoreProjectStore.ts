@@ -1,6 +1,7 @@
 import type { User as FirebaseUser } from "firebase/auth";
 import {
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
@@ -8,6 +9,8 @@ import {
   query,
   runTransaction,
   setDoc,
+  updateDoc,
+  where,
   writeBatch,
   type Firestore,
   type Transaction
@@ -46,6 +49,7 @@ export const FIRESTORE_ORGANIZATION_ID = "org_accel_projects";
 
 type CollectionKey = keyof ProjectState;
 type ProjectScopedCollectionKey = "projectMembers" | "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics" | "activityEvents" | "projectVersions" | "projectExportSnapshots" | "projectUpdateManifests";
+type FirestorePath = [string, ...string[]];
 
 const rootCollectionMap = {
   users: "users",
@@ -88,23 +92,29 @@ function requireRecordId(record: { id?: string }, label: string): string {
   return requirePathSegment(record.id, `${label}.id`);
 }
 
-function validatePathSegments(pathSegments: unknown[]) {
-  return pathSegments.map((segment, index) => requirePathSegment(segment, `path[${index}]`));
+function validatePathSegments(pathSegments: unknown[]): FirestorePath {
+  const segments = pathSegments.map((segment, index) => requirePathSegment(segment, `path[${index}]`));
+
+  if (segments.length === 0) {
+    throw new Error("Missing Firestore path.");
+  }
+
+  return [segments[0], ...segments.slice(1)];
 }
 
-function organizationPath() {
-  return [
+function organizationPath(): FirestorePath {
+  return validatePathSegments([
     requirePathSegment("organizations", "organizations collection"),
     requirePathSegment(FIRESTORE_ORGANIZATION_ID, "organizationId")
-  ];
+  ]);
 }
 
-function projectPath(projectId: string) {
-  return [
+function projectPath(projectId: string): FirestorePath {
+  return validatePathSegments([
     ...organizationPath(),
     requirePathSegment("projects", "projects collection"),
     requirePathSegment(projectId, "projectId")
-  ];
+  ]);
 }
 
 function createId(prefix: string) {
@@ -213,26 +223,53 @@ export function getFirestorePermissionMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unable to complete the Firestore action.";
 }
 
+function defaultNotificationPreferences() {
+  return {
+    taskAssignments: true,
+    dueDates: true,
+    risks: true,
+    projectMessages: false,
+    emailDelivery: false
+  };
+}
+
 export async function ensureFirestoreUserProfile(user: FirebaseUser) {
   const database = requireDb();
   const now = new Date().toISOString();
   const userId = requirePathSegment(user.uid, "auth.uid");
+  const orgRef = doc(database, ...organizationPath());
   const userRef = doc(database, ...organizationPath(), rootCollectionMap.users, userId);
+  const organization = await getDoc(orgRef);
   const existingUser = await getDoc(userRef);
   const name = getDisplayName(user);
   const email = user.email ?? "";
 
-  await setDoc(doc(database, ...organizationPath()), mockOrganization, { merge: true });
-  await setDoc(userRef, {
-    id: userId,
-    organizationId: FIRESTORE_ORGANIZATION_ID,
-    name,
-    email,
-    role: existingUser.exists() ? (existingUser.data().role ?? "project_manager") : "project_manager",
-    avatarInitials: getInitials(name, email),
-    createdAt: existingUser.exists() ? (existingUser.data().createdAt ?? now) : now,
+  if (!organization.exists()) {
+    await setDoc(orgRef, mockOrganization);
+  }
+
+  if (!existingUser.exists()) {
+    await setDoc(userRef, {
+      id: userId,
+      organizationId: FIRESTORE_ORGANIZATION_ID,
+      name,
+      email,
+      role: "viewer",
+      avatarInitials: getInitials(name, email),
+      createdAt: now,
+      updatedAt: now,
+      notificationPreferences: defaultNotificationPreferences()
+    } satisfies User);
+    return;
+  }
+
+  const existing = existingUser.data() as User;
+  await updateDoc(userRef, {
+    name: existing.name || name,
+    avatarInitials: existing.avatarInitials || getInitials(existing.name || name, existing.email || email),
+    notificationPreferences: existing.notificationPreferences ?? defaultNotificationPreferences(),
     updatedAt: now
-  } satisfies User, { merge: true });
+  });
 }
 
 export async function loadCurrentUserProfileFromFirestore(user: FirebaseUser, options: { ensureProfile?: boolean } = {}) {
@@ -251,9 +288,67 @@ export async function loadCurrentUserProfileFromFirestore(user: FirebaseUser, op
   return snapshot.data() as User;
 }
 
+export async function updateOwnUserProfileInFirestore(updates: Pick<Partial<User>, "name" | "avatarInitials" | "notificationPreferences">) {
+  const currentUser = requireCurrentUser();
+  const userId = requirePathSegment(currentUser.uid, "auth.uid");
+  const existing = await loadCurrentUserProfileFromFirestore(currentUser, { ensureProfile: false });
+  const patch: Pick<User, "name" | "avatarInitials" | "updatedAt"> & { notificationPreferences?: User["notificationPreferences"] } = {
+    name: updates.name?.trim() || existing.name,
+    avatarInitials: updates.avatarInitials?.trim().slice(0, 4).toUpperCase() || getInitials(updates.name ?? existing.name, existing.email),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (updates.notificationPreferences) {
+    patch.notificationPreferences = updates.notificationPreferences;
+  }
+
+  await updateDoc(doc(requireDb(), ...organizationPath(), rootCollectionMap.users, userId), patch);
+  return {
+    ...existing,
+    ...patch
+  };
+}
+
 async function readCollection<T extends { id: string }>(pathSegments: string[]) {
   const snapshot = await getDocs(query(collection(requireDb(), ...validatePathSegments(pathSegments))));
   return snapshot.docs.map((item) => item.data() as T);
+}
+
+async function readAuthorizedProjects(user: FirebaseUser, profile: User) {
+  if (profile.role === "admin") {
+    return (await readCollection<Project>([...organizationPath(), rootCollectionMap.projects])).map(withProjectRevisionDefaults);
+  }
+
+  if (profile.role === "client") {
+    return [];
+  }
+
+  const database = requireDb();
+  const projectsById = new Map<string, Project>();
+  const ownerProjects = profile.role === "project_manager"
+    ? await getDocs(query(collection(database, ...organizationPath(), rootCollectionMap.projects), where("ownerId", "==", user.uid)))
+    : null;
+  const memberDocuments = await getDocs(query(collectionGroup(database, "members"), where("userId", "==", user.uid)));
+
+  ownerProjects?.docs.forEach((item) => {
+    projectsById.set(item.id, withProjectRevisionDefaults(item.data() as Project));
+  });
+
+  await Promise.all(memberDocuments.docs.map(async (memberDocument) => {
+    const projectRef = memberDocument.ref.parent.parent;
+
+    if (!projectRef || projectsById.has(projectRef.id)) {
+      return;
+    }
+
+    const projectSnapshot = await getDoc(projectRef);
+
+    if (projectSnapshot.exists()) {
+      projectsById.set(projectSnapshot.id, withProjectRevisionDefaults(projectSnapshot.data() as Project));
+    }
+  }));
+
+  return [...projectsById.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function readProjectCollections<T extends { id: string }>(
@@ -281,9 +376,30 @@ export async function loadProjectStateFromFirestore(_user: FirebaseUser, options
     await ensureFirestoreUserProfile(_user);
   }
 
+  const profile = await loadCurrentUserProfileFromFirestore(_user, { ensureProfile: false });
+
+  if (profile.role === "client") {
+    return {
+      users: [profile],
+      clients: [],
+      projects: [],
+      projectMembers: [],
+      phases: [],
+      milestones: [],
+      tasks: [],
+      taskDependencies: [],
+      taskComments: [],
+      risks: [],
+      documents: [],
+      metrics: [],
+      activityEvents: [],
+      projectVersions: []
+    };
+  }
+
   const users = await readCollection<User>([...organizationPath(), rootCollectionMap.users]);
   const clients = await readCollection<Client>([...organizationPath(), rootCollectionMap.clients]);
-  const projects = (await readCollection<Project>([...organizationPath(), rootCollectionMap.projects])).map(withProjectRevisionDefaults);
+  const projects = await readAuthorizedProjects(_user, profile);
 
   const [
     projectMembers,
@@ -363,12 +479,16 @@ export async function seedProjectStateToFirestore(initialState: ProjectState = i
 
   const writeProjectScoped = <T extends { id: string; projectId: string }>(items: T[], key: ProjectScopedCollectionKey) => {
     items.forEach((item) => {
+      const documentId = key === "projectMembers"
+        ? requirePathSegment((item as unknown as ProjectMember).userId, "projectMembers.userId")
+        : requireRecordId(item, key);
+
       batch.set(
         doc(
           database,
           ...projectPath(requirePathSegment(item.projectId, `${key}.projectId`)),
           requirePathSegment(projectCollectionMap[key], `${key} collection`),
-          requireRecordId(item, key)
+          documentId
         ),
         item
       );
