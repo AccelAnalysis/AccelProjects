@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Diamond,
   Filter,
@@ -33,6 +34,8 @@ import { taskStatusLabels } from "../ProjectWidgets";
 const rowHeight = 48;
 const headerHeight = 54;
 const minTaskHitWidth = 10;
+
+export const planRowHeight = rowHeight;
 
 type PendingChange =
   | {
@@ -125,7 +128,6 @@ export function PlanWorkspace({
   const [undoCommand, setUndoCommand] = useState<UndoCommand | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [createMode, setCreateMode] = useState<"task" | "milestone" | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState({ name: "", date: project.startDate, status: "planned" as Milestone["status"] });
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
@@ -133,7 +135,7 @@ export function PlanWorkspace({
   const [viewportWidth, setViewportWidth] = useState(900);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const viewButtonRef = useRef<HTMLButtonElement | null>(null);
-  const newButtonRef = useRef<HTMLButtonElement | null>(null);
+  const createButtonRef = useRef<HTMLButtonElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const hierarchyResizeRef = useRef<{ startX: number; width: number } | null>(null);
@@ -192,7 +194,6 @@ export function PlanWorkspace({
     setUndoCommand(null);
     setFilterOpen(false);
     setViewOpen(false);
-    setNewMenuOpen(false);
     setCreateMode(null);
   }, [project.id]);
 
@@ -332,6 +333,11 @@ export function PlanWorkspace({
       }
       return next;
     });
+  }
+
+  function openTask(taskId: string) {
+    setSelectedTaskIds(new Set([taskId]));
+    onOpenTask(taskId);
   }
 
   function selectAllVisible() {
@@ -499,9 +505,32 @@ export function PlanWorkspace({
   const headers = generateTimelineHeaderTicks(range, scale);
   const rowCount = rowModel.length;
   const selectedMilestone = selectedMilestoneId ? milestones.find((milestone) => milestone.id === selectedMilestoneId) : undefined;
+  const completedTaskCount = tasks.filter((task) => task.status === "done").length;
+  const progress = tasks.length > 0 ? Math.round((completedTaskCount / tasks.length) * 100) : 0;
 
   return (
     <div className="plan-workbench">
+      <div className="plan-workbench-header">
+        <div>
+          <p className="eyebrow">Project Plan</p>
+          <h2>Schedule Workbench</h2>
+          <p>{visibleTasks.length} visible tasks · {filtered.milestones.length} milestones · {progress}% complete</p>
+        </div>
+        <div className="plan-workbench-actions">
+          {canManageSchedule ? (
+            <button className="secondary-button" type="button" onClick={() => setCreateMode("milestone")}>
+              <Diamond size={16} aria-hidden="true" />
+              Add Milestone
+            </button>
+          ) : null}
+          {canCreateTasks ? (
+            <button ref={createButtonRef} className="action-button" type="button" onClick={() => setCreateMode("task")}>
+              <Plus size={16} aria-hidden="true" />
+              Add Task
+            </button>
+          ) : null}
+        </div>
+      </div>
       <PlanToolbar
         filters={viewState.filters}
         grouping={viewState.grouping}
@@ -516,10 +545,8 @@ export function PlanWorkspace({
         activeFilterCount={countActiveFilters(viewState.filters)}
         filterOpen={filterOpen}
         viewOpen={viewOpen}
-        newMenuOpen={newMenuOpen}
         filterButtonRef={filterButtonRef}
         viewButtonRef={viewButtonRef}
-        newButtonRef={newButtonRef}
         onFiltersChange={updateFilters}
         onClearFilter={clearFilter}
         onClearAll={() => setViewState((current) => ({ ...current, filters: defaultPlanFilters }))}
@@ -546,22 +573,6 @@ export function PlanWorkspace({
             viewButtonRef.current?.focus();
           }
         }}
-        onNewMenuOpenChange={(open) => {
-          setNewMenuOpen(open);
-          if (!open) {
-            newButtonRef.current?.focus();
-          }
-        }}
-        onCreateTask={() => {
-          setNewMenuOpen(false);
-          setCreateMode("task");
-        }}
-        onCreateMilestone={() => {
-          setNewMenuOpen(false);
-          setCreateMode("milestone");
-        }}
-        canCreateTasks={canCreateTasks}
-        canManageSchedule={canManageSchedule}
       />
 
       {notice ? <div className="plan-status" role="status">{notice}<button className="link-button" type="button" onClick={() => setNotice("")}>Dismiss</button></div> : null}
@@ -599,6 +610,7 @@ export function PlanWorkspace({
       <div
         ref={scrollRef}
         className="plan-grid-scroll"
+        data-plan-row-height={rowHeight}
         style={{ "--hierarchy-width": `${viewState.hierarchyWidth}px`, "--timeline-width": `${scale.timelineWidth}px` } as CSSProperties}
       >
         <div className="plan-grid" style={{ width: `${viewState.hierarchyWidth + scale.timelineWidth}px` }}>
@@ -634,7 +646,7 @@ export function PlanWorkspace({
                 selectedTaskIds={selectedTaskIds}
                 onToggleCollapse={toggleCollapse}
                 onToggleTask={toggleTask}
-                onOpenTask={onOpenTask}
+                onOpenTask={openTask}
                 rowTop={index * rowHeight}
               />
             ))}
@@ -653,7 +665,7 @@ export function PlanWorkspace({
                 phases={phases}
                 users={users}
                 dragState={dragState}
-                onOpenTask={onOpenTask}
+                onOpenTask={openTask}
                 onSelectMilestone={setSelectedMilestoneId}
                 onTaskPointerDown={(task, mode, event) => {
                   if (!canEditTask(task) || !isScheduledTask(task)) {
@@ -680,7 +692,7 @@ export function PlanWorkspace({
         tasks={sortTasks(tasks.filter((task) => getTaskScheduleState(task) !== "scheduled"))}
         phases={phases}
         canEditTask={canEditTask}
-        onOpenTask={onOpenTask}
+        onOpenTask={openTask}
         onSchedule={(task, date) => proposeTaskChange(task, scheduleTaskAt(task, date, 5), "Schedule task")}
         onUpdatePhase={(task, phaseId) => proposeTaskChange(task, { phaseId }, "Move task to phase")}
       />
@@ -689,7 +701,7 @@ export function PlanWorkspace({
         dependencies={dependencies}
         tasks={tasks}
         canManageSchedule={canManageSchedule}
-        onOpenTask={onOpenTask}
+        onOpenTask={openTask}
         onCreateDependency={createDependency}
         onUpdateDependency={onUpdateDependency}
         onDeleteDependency={onDeleteDependency}
@@ -702,7 +714,7 @@ export function PlanWorkspace({
       {createMode === "task" && canCreateTasks ? (
         <CreateDrawer title="New task" onClose={() => {
           setCreateMode(null);
-          newButtonRef.current?.focus();
+          createButtonRef.current?.focus();
         }}>
           <InlineTaskCreator projectId={project.id} phases={phases} users={users} onCreateTask={(task) => {
             onCreateTask(task);
@@ -714,7 +726,7 @@ export function PlanWorkspace({
       {createMode === "milestone" && canManageSchedule ? (
         <CreateDrawer title="New milestone" onClose={() => {
           setCreateMode(null);
-          newButtonRef.current?.focus();
+          createButtonRef.current?.focus();
         }}>
           <form
             className="drawer-form"
@@ -825,10 +837,8 @@ function PlanToolbar({
   activeFilterCount,
   filterOpen,
   viewOpen,
-  newMenuOpen,
   filterButtonRef,
   viewButtonRef,
-  newButtonRef,
   onFiltersChange,
   onClearFilter,
   onClearAll,
@@ -844,12 +854,7 @@ function PlanToolbar({
   onExpandAll,
   onCollapseAll,
   onFilterOpenChange,
-  onViewOpenChange,
-  onNewMenuOpenChange,
-  onCreateTask,
-  onCreateMilestone,
-  canCreateTasks,
-  canManageSchedule
+  onViewOpenChange
 }: {
   filters: PlanFilters;
   grouping: PlanGrouping;
@@ -864,10 +869,8 @@ function PlanToolbar({
   activeFilterCount: number;
   filterOpen: boolean;
   viewOpen: boolean;
-  newMenuOpen: boolean;
   filterButtonRef: RefObject<HTMLButtonElement | null>;
   viewButtonRef: RefObject<HTMLButtonElement | null>;
-  newButtonRef: RefObject<HTMLButtonElement | null>;
   onFiltersChange: (filters: Partial<PlanFilters>) => void;
   onClearFilter: (key: keyof PlanFilters) => void;
   onClearAll: () => void;
@@ -884,11 +887,6 @@ function PlanToolbar({
   onCollapseAll: () => void;
   onFilterOpenChange: (open: boolean) => void;
   onViewOpenChange: (open: boolean) => void;
-  onNewMenuOpenChange: (open: boolean) => void;
-  onCreateTask: () => void;
-  onCreateMilestone: () => void;
-  canCreateTasks: boolean;
-  canManageSchedule: boolean;
 }) {
   const activeChips = activeFilterChips(filters, phases, users);
 
@@ -903,14 +901,11 @@ function PlanToolbar({
       if (viewOpen) {
         onViewOpenChange(false);
       }
-      if (newMenuOpen) {
-        onNewMenuOpenChange(false);
-      }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filterOpen, newMenuOpen, onFilterOpenChange, onNewMenuOpenChange, onViewOpenChange, viewOpen]);
+  }, [filterOpen, onFilterOpenChange, onViewOpenChange, viewOpen]);
 
   return (
     <section className="plan-workbench-toolbar" aria-label="Plan controls">
@@ -925,7 +920,9 @@ function PlanToolbar({
           {activeFilterCount > 0 ? `Filter ${activeFilterCount}` : "Filter"}
         </button>
         <button className="secondary-button" type="button" onClick={onToday}><CalendarDays size={16} aria-hidden="true" />Today</button>
-        <button className="secondary-button compact-icon-button" type="button" aria-label="Previous period" onClick={onPrevious}>‹</button>
+        <button className="secondary-button compact-icon-button" type="button" aria-label="Previous period" onClick={onPrevious}>
+          <ChevronLeft size={16} aria-hidden="true" />
+        </button>
         <label className="toolbar-select-label">
           <span className="sr-only">Timeline zoom</span>
           <select aria-label="Timeline zoom" value={zoomMode} onChange={(event) => onZoomChange(event.target.value as TimelineZoomMode)}>
@@ -936,25 +933,13 @@ function PlanToolbar({
             <option value="fit">Fit Project</option>
           </select>
         </label>
-        <button className="secondary-button compact-icon-button" type="button" aria-label="Next period" onClick={onNext}>›</button>
+        <button className="secondary-button compact-icon-button" type="button" aria-label="Next period" onClick={onNext}>
+          <ChevronRight size={16} aria-hidden="true" />
+        </button>
         <button ref={viewButtonRef} className="secondary-button" type="button" aria-expanded={viewOpen} onClick={() => onViewOpenChange(!viewOpen)}>
           <SlidersHorizontal size={16} aria-hidden="true" />
           View
         </button>
-        {(canCreateTasks || canManageSchedule) ? (
-          <div className="toolbar-menu-anchor">
-            <button ref={newButtonRef} className="action-button" type="button" aria-expanded={newMenuOpen} onClick={() => onNewMenuOpenChange(!newMenuOpen)}>
-              <Plus size={16} aria-hidden="true" />
-              New
-            </button>
-            {newMenuOpen ? (
-              <div className="plan-popover compact-menu" role="menu" aria-label="New work item">
-                {canCreateTasks ? <button type="button" role="menuitem" onClick={onCreateTask}>New Task</button> : null}
-                {canManageSchedule ? <button type="button" role="menuitem" onClick={onCreateMilestone}>New Milestone</button> : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       {filterOpen ? (
@@ -1172,9 +1157,16 @@ function HierarchyRow({
   rowTop: number;
 }) {
   const taskOwner = row.type === "task" ? users.find((user) => user.id === row.task.assigneeId) : undefined;
+  const selected = row.type === "task" && selectedTaskIds.has(row.task.id);
 
   return (
-    <div className={`plan-hierarchy-row row-${row.type}`} style={{ top: rowTop }} role="row" aria-label={row.accessibilityLabel}>
+    <div
+      aria-label={row.accessibilityLabel}
+      aria-selected={row.type === "task" ? selected : undefined}
+      className={`plan-hierarchy-row row-${row.type}${selected ? " selected" : ""}`}
+      style={{ top: rowTop }}
+      role="row"
+    >
       {row.type === "phase" || row.type === "group" ? (
         <button className="plan-row-title group-title" type="button" onClick={() => onToggleCollapse(row.id)} aria-expanded={row.expanded}>
           {row.expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
@@ -1278,7 +1270,7 @@ function TimelineRow({
               onTaskPointerDown(row.task, "resize-start", event);
             }}
           />
-          <span className="task-bar-label">{row.task.status.replace("_", " ")}</span>
+          <span className="task-bar-label">{row.task.title}</span>
           <span
             className="resize-handle end"
             aria-label={`Resize due date for ${row.task.title}`}

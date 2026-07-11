@@ -51,6 +51,7 @@ import {
   ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
+import { GlobalNavigation } from "./components/layout/GlobalNavigation";
 import {
   buildProjectPath,
   buildProjectUpdatePath,
@@ -349,69 +350,6 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   return <DashboardPage {...props} />;
 }
 
-function isActiveRoute(href: string, pathname: string) {
-  const path = pathname;
-
-  if (href === "/") {
-    return path === "/";
-  }
-
-  if (href === "/projects") {
-    return path === "/projects" || path.startsWith("/projects/");
-  }
-
-  return path === href || (href === "/system-tests" && (path === "/admin" || path === "/test"));
-}
-
-function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate: (path: string) => void }) {
-  function renderNavItem(item: typeof primaryNavItems[number]) {
-    const Icon = item.icon;
-    const active = isActiveRoute(item.href, pathname);
-
-    return (
-      <a
-        className={active ? "sidebar-link active" : "sidebar-link"}
-        href={item.href}
-        key={item.href}
-        onClick={(event) => {
-          event.preventDefault();
-          onNavigate(item.href);
-        }}
-      >
-        <Icon size={18} aria-hidden="true" />
-        <span>{item.label}</span>
-      </a>
-    );
-  }
-
-  return (
-    <aside className="sidebar">
-      <a
-        className="sidebar-brand"
-        href="/"
-        onClick={(event) => {
-          event.preventDefault();
-          onNavigate("/");
-        }}
-      >
-        <span className="brand-logo">
-          <img src={accelLogo} alt="AccelProjects" />
-        </span>
-        <span>
-          <strong>AccelProjects</strong>
-          <small>Project Operations</small>
-        </span>
-      </a>
-      <nav className="sidebar-nav">
-        {primaryNavItems.map(renderNavItem)}
-      </nav>
-      <nav className="sidebar-nav sidebar-utility-nav" aria-label="Utilities">
-        {utilityNavItems.map(renderNavItem)}
-      </nav>
-    </aside>
-  );
-}
-
 function TopHeader({
   user,
   role,
@@ -620,6 +558,7 @@ function AppShell() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>();
   const [showNewTaskForm, setShowNewTaskForm] = useState(false);
   const [pathname, setPathname] = useState(() => window.location.pathname);
+  const [globalNavCollapsed, setGlobalNavCollapsed] = useState(() => window.matchMedia?.("(max-width: 1180px)").matches ?? false);
 
   useEffect(() => {
     const handlePopState = () => setPathname(window.location.pathname);
@@ -1284,7 +1223,15 @@ function AppShell() {
   if (projectLoading) {
     return (
       <div className="app-shell">
-        <Sidebar pathname={pathname} onNavigate={navigate} />
+        <GlobalNavigation
+          pathname={pathname}
+          primaryItems={primaryNavItems}
+          utilityItems={utilityNavItems}
+          collapsed={globalNavCollapsed}
+          brandLogo={accelLogo}
+          onCollapsedChange={setGlobalNavCollapsed}
+          onNavigate={navigate}
+        />
         <div className="main-shell">
           <TopHeader
             user={user}
@@ -1316,7 +1263,15 @@ function AppShell() {
 
   return (
     <div className="app-shell">
-      <Sidebar pathname={pathname} onNavigate={navigate} />
+      <GlobalNavigation
+        pathname={pathname}
+        primaryItems={primaryNavItems}
+        utilityItems={utilityNavItems}
+        collapsed={globalNavCollapsed}
+        brandLogo={accelLogo}
+        onCollapsedChange={setGlobalNavCollapsed}
+        onNavigate={navigate}
+      />
       <div className="main-shell">
         <TopHeader
           user={user}
