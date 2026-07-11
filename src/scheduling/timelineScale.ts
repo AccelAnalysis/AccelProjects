@@ -1,7 +1,7 @@
 import type { ScheduleRange } from "../utils/scheduleRange";
 import { addDays, addMonths, daysBetween, formatDateOnly, parseDateOnly, toDateOnly } from "../utils/dateOnly";
 
-export type TimelineZoomMode = "day" | "week" | "month" | "quarter" | "fit";
+export type TimelineZoomMode = "hour" | "day" | "week" | "month" | "quarter" | "year" | "decade" | "century" | "fit";
 
 export type TimelineScale = {
   mode: TimelineZoomMode;
@@ -19,10 +19,14 @@ export type TimelineHeaderTick = {
 };
 
 const zoomPixelsPerDay: Record<Exclude<TimelineZoomMode, "fit">, number> = {
+  hour: 96,
   day: 36,
   week: 14,
   month: 4.5,
-  quarter: 1.6
+  quarter: 1.6,
+  year: 0.55,
+  decade: 0.08,
+  century: 0.012
 };
 
 export function pixelsForZoom(mode: TimelineZoomMode, range: ScheduleRange, viewportWidth: number) {
@@ -59,13 +63,28 @@ export function xToDate(x: number, range: ScheduleRange, scale: TimelineScale) {
 export function generateTimelineHeaderTicks(range: ScheduleRange, scale: TimelineScale): TimelineHeaderTick[] {
   const ticks: TimelineHeaderTick[] = [];
   const totalDays = Math.max(range.totalDays, 1);
-  const minorStep = scale.mode === "day" ? 1 : scale.mode === "week" ? 7 : scale.mode === "month" ? 30 : 91;
+  const minorStep = scale.mode === "hour" || scale.mode === "day"
+    ? 1
+    : scale.mode === "week" || scale.mode === "fit"
+      ? 7
+      : scale.mode === "month"
+        ? 30
+        : scale.mode === "quarter"
+          ? 91
+          : scale.mode === "year"
+            ? 365
+            : scale.mode === "decade"
+              ? 3650
+              : 36500;
+  const minorLabelOptions: Intl.DateTimeFormatOptions = scale.mode === "hour" || scale.mode === "day" || scale.mode === "week"
+    ? { month: "short", day: "numeric" }
+    : { month: "short", year: "numeric" };
 
   for (let day = 0; day <= totalDays; day += minorStep) {
     const date = addDays(range.startDate, day);
     ticks.push({
       date,
-      label: formatDateOnly(date, scale.mode === "day" || scale.mode === "week" ? { month: "short", day: "numeric" } : { month: "short", year: "numeric" }),
+      label: formatDateOnly(date, minorLabelOptions),
       positionPx: dateToX(date, range, scale),
       level: "minor"
     });
@@ -86,7 +105,7 @@ export function generateTimelineHeaderTicks(range: ScheduleRange, scale: Timelin
           level: "major"
         });
       }
-      cursor.setUTCMonth(cursor.getUTCMonth() + (scale.mode === "quarter" ? 3 : 1));
+      cursor.setUTCMonth(cursor.getUTCMonth() + majorMonthStep(scale.mode));
     }
   }
 
@@ -103,7 +122,7 @@ export function generateTimelineHeaderTicks(range: ScheduleRange, scale: Timelin
 }
 
 export function nextPeriod(date: string, mode: TimelineZoomMode, direction: -1 | 1) {
-  if (mode === "day") {
+  if (mode === "hour" || mode === "day") {
     return addDays(date, direction);
   }
 
@@ -115,5 +134,33 @@ export function nextPeriod(date: string, mode: TimelineZoomMode, direction: -1 |
     return addMonths(date, direction);
   }
 
-  return addMonths(date, direction * 3);
+  if (mode === "quarter") {
+    return addMonths(date, direction * 3);
+  }
+
+  if (mode === "year") {
+    return addMonths(date, direction * 12);
+  }
+
+  if (mode === "decade") {
+    return addMonths(date, direction * 120);
+  }
+
+  return addMonths(date, direction * 1200);
+}
+
+function majorMonthStep(mode: TimelineZoomMode) {
+  if (mode === "quarter") {
+    return 3;
+  }
+  if (mode === "year") {
+    return 12;
+  }
+  if (mode === "decade") {
+    return 120;
+  }
+  if (mode === "century") {
+    return 1200;
+  }
+  return 1;
 }

@@ -1,6 +1,7 @@
 import {
   Bell,
   BriefcaseBusiness,
+  ChevronDown,
   ClipboardList,
   Download,
   FlaskConical,
@@ -13,10 +14,12 @@ import {
   Plus,
   Search,
   Settings,
+  ShieldCheck,
+  UserCircle,
   Users
 } from "lucide-react";
 import type { User as FirebaseUser } from "firebase/auth";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { LoginPage } from "./auth/LoginPage";
 import { AdminPage } from "./pages/AdminPage";
@@ -48,7 +51,6 @@ import { TestPage } from "./pages/TestPage";
 import {
   GlobalSearchResults,
   NewTaskForm,
-  ProjectSelector,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
 import { GlobalNavigation } from "./components/layout/GlobalNavigation";
@@ -350,7 +352,7 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   return <HomePage {...props} />;
 }
 
-function TopHeader({
+export function TopHeader({
   user,
   role,
   profileRole,
@@ -375,15 +377,53 @@ function TopHeader({
   onNavigate: (path: string) => void;
   onLogout: () => void;
 }) {
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const selectedRole = demoRoles.find((item) => item.role === role);
   const profileRoleLabel = demoRoles.find((item) => item.role === profileRole)?.label ?? profileRole;
   const displayName = user.displayName || user.email || "Signed-in user";
+  const displayEmail = user.email ?? userProfile?.email ?? "";
   const initials = displayName
     .split(/[\s@.]+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "AP";
+
+  useEffect(() => {
+    if (!profileMenuOpen) {
+      return undefined;
+    }
+
+    function onPointerDown(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setProfileMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [profileMenuOpen]);
+
+  function navigateFromProfileMenu(path: string) {
+    setProfileMenuOpen(false);
+    onNavigate(path);
+  }
+
+  function logoutFromProfileMenu() {
+    setProfileMenuOpen(false);
+    onLogout();
+  }
 
   return (
     <header className="top-header">
@@ -411,25 +451,61 @@ function TopHeader({
           <Bell size={18} aria-hidden="true" />
           <span className="notification-dot" />
         </button>
-        <div className="user-chip">
-          <span className="user-avatar">{initials}</span>
-          <span>
-            <strong>{userProfile?.name ?? displayName}</strong>
-            <small>
-              {selectedRole?.label ?? profileRoleLabel}
-              {adminPreviewAvailable && adminPreviewRole !== "off" ? ` admin preview / ${profileRoleLabel}` : ""}
-            </small>
-          </span>
+        <div className="profile-menu-anchor" ref={menuRef}>
+          <button
+            className="user-chip profile-menu-trigger"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((open) => !open)}
+          >
+            <span className="user-avatar">{initials}</span>
+            <span>
+              <strong>{userProfile?.name ?? displayName}</strong>
+              <small>
+                {selectedRole?.label ?? profileRoleLabel}
+                {adminPreviewAvailable && adminPreviewRole !== "off" ? ` admin preview / ${profileRoleLabel}` : ""}
+              </small>
+            </span>
+          </button>
+          {profileMenuOpen ? (
+            <div className="profile-menu" role="menu" aria-label="Profile menu">
+              <div className="profile-menu-summary">
+                <strong>{userProfile?.name ?? displayName}</strong>
+                {displayEmail ? <span>{displayEmail}</span> : null}
+              </div>
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+                <UserCircle size={16} aria-hidden="true" />
+                View or Edit Profile
+              </button>
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+                <Settings size={16} aria-hidden="true" />
+                Account Settings
+              </button>
+              {role !== "client" ? (
+                <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/settings")}>
+                  <ShieldCheck size={16} aria-hidden="true" />
+                  Access Settings
+                </button>
+              ) : null}
+              <button type="button" role="menuitem" onClick={() => navigateFromProfileMenu("/notifications")}>
+                <Bell size={16} aria-hidden="true" />
+                Notification Preferences
+              </button>
+              <div className="profile-menu-separator" />
+              <button className="danger-menu-item" type="button" role="menuitem" onClick={logoutFromProfileMenu}>
+                <LogOut size={16} aria-hidden="true" />
+                Log Out
+              </button>
+            </div>
+          ) : null}
         </div>
-        <button className="icon-button" type="button" aria-label="Sign out" onClick={onLogout}>
-          <LogOut size={18} aria-hidden="true" />
-        </button>
       </div>
     </header>
   );
 }
 
-function ProjectContextBar({
+export function ProjectContextBar({
   projectState,
   selectedProjectId,
   onProjectChange,
@@ -458,13 +534,39 @@ function ProjectContextBar({
   const progress = tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0;
   const healthTone = project.health === "blocked" ? "danger" : project.health === "at_risk" ? "warning" : "success";
   const healthLabel = project.health === "blocked" ? "Blocked" : project.health === "at_risk" ? "At risk" : "On track";
+  const switcherLabel = `Switch project from ${project.name}`;
 
   return (
     <section className="project-context-bar">
       <div className="project-context-main">
-        <p className="project-breadcrumb">{client?.name ?? "Client"} / <span title={project.name}>{project.name}</span></p>
+        <p className="project-breadcrumb">{client?.name ?? "Client"} / Project</p>
         <div className="project-title-row">
           <h1>{project.name}</h1>
+          <details className="project-switcher-menu">
+            <summary aria-label={switcherLabel} title="Switch project">
+              <ChevronDown size={16} aria-hidden="true" />
+            </summary>
+            <div className="project-switcher-popover" role="menu" aria-label="Switch project">
+              {projectState.projects.map((candidate) => {
+                const candidateClient = projectState.clients.find((item) => item.id === candidate.clientId);
+                const selected = candidate.id === project.id;
+
+                return (
+                  <button
+                    aria-current={selected ? "page" : undefined}
+                    className={selected ? "active" : undefined}
+                    key={candidate.id}
+                    role="menuitem"
+                    type="button"
+                    onClick={() => onProjectChange(candidate.id)}
+                  >
+                    <span>{candidate.name}</span>
+                    <small>{candidateClient?.name ?? "Client unavailable"}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
           <span className={`status-badge ${healthTone}`}>
             {healthLabel}
           </span>
@@ -475,16 +577,10 @@ function ProjectContextBar({
         </div>
       </div>
       <div className="project-header-actions">
-        <ProjectSelector
-          clients={projectState.clients}
-          projects={projectState.projects}
-          selectedProjectId={selectedProjectId}
-          onProjectChange={onProjectChange}
-        />
         {canCreateTasks ? (
-          <button className="action-button" type="button" onClick={onNewTask}>
+          <button className="action-button" type="button" onClick={onNewTask} title="Create a new task">
             <Plus size={18} aria-hidden="true" />
-            New
+            New Task
           </button>
         ) : null}
         <details className="project-actions-menu">

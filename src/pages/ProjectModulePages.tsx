@@ -15,7 +15,7 @@ import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
 import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
 import type { Task } from "../types";
-import { todayDateOnly } from "../utils/dateOnly";
+import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
 
@@ -91,6 +91,12 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
             ) : null}
           </div>
         ) : (
+          <>
+          <ProjectPortfolioTimeline
+            projectState={projectState}
+            selectedProjectId={selectedProjectId}
+            onNavigate={onNavigate}
+          />
           <div className="project-list portfolio-list">
             {projectState.projects.map((project) => {
               const client = projectState.clients.find((item) => item.id === project.clientId);
@@ -129,9 +135,89 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
               );
             })}
           </div>
+          </>
         )}
       </section>
     </div>
+  );
+}
+
+function ProjectPortfolioTimeline({
+  projectState,
+  selectedProjectId,
+  onNavigate
+}: {
+  projectState: ProjectPageProps["projectState"];
+  selectedProjectId: string;
+  onNavigate: (path: string) => void;
+}) {
+  const scheduledProjects = projectState.projects.filter((project) => isDateOnly(project.startDate) && isDateOnly(project.targetDate));
+
+  if (scheduledProjects.length === 0) {
+    return null;
+  }
+
+  const startDate = scheduledProjects.map((project) => project.startDate).sort(compareDateOnly)[0];
+  const endDate = scheduledProjects.map((project) => project.targetDate).sort(compareDateOnly).at(-1) ?? startDate;
+  const totalDays = Math.max(daysBetween(startDate, endDate), 1);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const dayOffset = Math.round(totalDays * ratio);
+    const date = new Date(`${startDate}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + dayOffset);
+    return {
+      label: formatDate(date.toISOString().slice(0, 10)),
+      left: ratio * 100
+    };
+  });
+
+  return (
+    <section className="portfolio-timeline" aria-label="Project portfolio timeline">
+      <div className="portfolio-timeline-header">
+        <div>
+          <h2>Project Timeline</h2>
+          <p>Compare active project schedules across the portfolio.</p>
+        </div>
+      </div>
+      <div className="portfolio-timeline-grid">
+        <div className="portfolio-timeline-axis" aria-hidden="true">
+          {ticks.map((tick) => (
+            <span key={`${tick.label}-${tick.left}`} style={{ left: `${tick.left}%` }}>{tick.label}</span>
+          ))}
+        </div>
+        {scheduledProjects.map((project) => {
+          const client = projectState.clients.find((item) => item.id === project.clientId);
+          const owner = projectState.users.find((item) => item.id === project.ownerId);
+          const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+          const stats = projectStats(tasks);
+          const offset = Math.max(0, daysBetween(startDate, project.startDate));
+          const duration = Math.max(1, daysBetween(project.startDate, project.targetDate));
+          const left = (offset / totalDays) * 100;
+          const width = Math.max(3, (duration / totalDays) * 100);
+          const selected = project.id === selectedProjectId;
+
+          return (
+            <div className={selected ? "portfolio-timeline-row selected" : "portfolio-timeline-row"} key={project.id}>
+              <button className="portfolio-timeline-title button-reset" type="button" onClick={() => onNavigate(buildProjectPath(project.id, "plan"))}>
+                <strong>{project.name}</strong>
+                <span>{client?.name ?? "Client unavailable"}</span>
+              </button>
+              <div className="portfolio-timeline-track">
+                <button
+                  className={`portfolio-project-bar health-${project.health}`}
+                  type="button"
+                  style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
+                  onClick={() => onNavigate(buildProjectPath(project.id, "plan"))}
+                  aria-label={`Open project ${project.name}`}
+                  title={`${project.name} — ${client?.name ?? "Client unavailable"} — ${stats.progress}% complete — Target ${formatDate(project.targetDate)} — Owner ${owner?.name ?? "No owner"}`}
+                >
+                  <span>{project.name}</span>
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

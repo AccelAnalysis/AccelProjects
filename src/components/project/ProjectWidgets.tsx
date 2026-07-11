@@ -829,6 +829,42 @@ export function RiskRegister({
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
 }) {
   const [draft, setDraft] = useRiskDraft();
+  const [formOpen, setFormOpen] = useState(risks.length === 0);
+  const riskForm = canManage && formOpen ? (
+    <form
+      className="inline-create-form risk-create-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (draft.title.trim()) {
+          onAddRisk(draft);
+          setDraft({ ...draft, title: "", mitigationPlan: "" });
+          setFormOpen(false);
+        }
+      }}
+    >
+      <input
+        aria-label="Risk title"
+        placeholder="Add risk or issue..."
+        value={draft.title}
+        onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+      />
+      <select aria-label="Risk severity" value={draft.severity} onChange={(event) => setDraft({ ...draft, severity: event.target.value as ProjectRisk["severity"] })}>
+        {["low", "medium", "high", "critical"].map((severity) => (
+          <option key={severity} value={severity}>{severity}</option>
+        ))}
+      </select>
+      <input
+        aria-label="Mitigation plan"
+        placeholder="Mitigation plan"
+        value={draft.mitigationPlan}
+        onChange={(event) => setDraft({ ...draft, mitigationPlan: event.target.value })}
+      />
+      <button className="action-button" type="submit">
+        <Plus size={16} aria-hidden="true" />
+        Save Risk
+      </button>
+    </form>
+  ) : null;
 
   return (
     <section className="panel risk-panel">
@@ -837,7 +873,20 @@ export function RiskRegister({
           <h2>Risk & Issue Register</h2>
           <p>Active delivery risks requiring attention.</p>
         </div>
+        {canManage ? (
+          <button className="action-button" type="button" onClick={() => setFormOpen((open) => !open)} aria-expanded={formOpen}>
+            <Plus size={16} aria-hidden="true" />
+            Add Risk
+          </button>
+        ) : null}
       </div>
+      {riskForm}
+      {risks.length === 0 ? (
+        <div className="empty-state compact-empty-state">
+          <h3>No risks recorded</h3>
+          <p>Project risks and issues will appear here once added.</p>
+        </div>
+      ) : null}
       <div className="page-grid two">
         {risks.map((risk) => (
           <article className={`risk-card severity-${risk.severity}`} key={risk.id}>
@@ -863,40 +912,6 @@ export function RiskRegister({
           </article>
         ))}
       </div>
-      {canManage ? (
-        <form
-          className="inline-create-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (draft.title.trim()) {
-              onAddRisk(draft);
-              setDraft({ ...draft, title: "", mitigationPlan: "" });
-            }
-          }}
-        >
-          <input
-            aria-label="Risk title"
-            placeholder="Add risk or issue..."
-            value={draft.title}
-            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-          />
-          <select value={draft.severity} onChange={(event) => setDraft({ ...draft, severity: event.target.value as ProjectRisk["severity"] })}>
-            {["low", "medium", "high", "critical"].map((severity) => (
-              <option key={severity} value={severity}>{severity}</option>
-            ))}
-          </select>
-          <input
-            aria-label="Mitigation plan"
-            placeholder="Mitigation plan"
-            value={draft.mitigationPlan}
-            onChange={(event) => setDraft({ ...draft, mitigationPlan: event.target.value })}
-          />
-          <button className="action-button" type="submit">
-            <Plus size={16} aria-hidden="true" />
-            Add Risk
-          </button>
-        </form>
-      ) : null}
     </section>
   );
 }

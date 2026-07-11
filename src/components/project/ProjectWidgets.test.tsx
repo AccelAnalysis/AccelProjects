@@ -3,8 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Phase, Task, User } from "../../types";
-import { TaskDetailPanel } from "./ProjectWidgets";
+import type { Phase, ProjectRisk, Task, User } from "../../types";
+import { RiskRegister, TaskDetailPanel } from "./ProjectWidgets";
 
 afterEach(() => {
   cleanup();
@@ -42,6 +42,35 @@ describe("TaskDetailPanel", () => {
   });
 });
 
+describe("RiskRegister", () => {
+  it("shows Add Risk at the top and preserves risk creation", async () => {
+    const onAddRisk = vi.fn();
+
+    render(
+      <RiskRegister
+        risks={[risk]}
+        canManage={true}
+        onAddRisk={onAddRisk}
+        onUpdateRisk={vi.fn()}
+      />
+    );
+
+    const addRiskButton = screen.getByRole("button", { name: "Add Risk" });
+    expect(addRiskButton.closest(".panel-header")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Risk title")).not.toBeInTheDocument();
+
+    await userEvent.click(addRiskButton);
+    await userEvent.type(screen.getByLabelText("Risk title"), "Scope risk");
+    await userEvent.type(screen.getByLabelText("Mitigation plan"), "Confirm scope with client");
+    await userEvent.click(screen.getByRole("button", { name: "Save Risk" }));
+
+    expect(onAddRisk).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Scope risk",
+      mitigationPlan: "Confirm scope with client"
+    }));
+  });
+});
+
 const phase: Phase = {
   id: "phase_1",
   projectId: "project_1",
@@ -73,4 +102,14 @@ const user: User = {
   email: "ada@example.com",
   role: "project_manager",
   avatarInitials: "AL"
+};
+
+const risk: ProjectRisk = {
+  id: "risk_1",
+  projectId: "project_1",
+  title: "Existing risk",
+  severity: "medium",
+  probability: "medium",
+  status: "monitoring",
+  mitigationPlan: "Watch closely."
 };
