@@ -6,6 +6,9 @@ import {
   ChevronRight,
   Diamond,
   Filter,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RotateCcw,
   SlidersHorizontal,
@@ -131,6 +134,8 @@ export function PlanWorkspace({
   const [createMode, setCreateMode] = useState<"task" | "milestone" | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState({ name: "", date: project.startDate, status: "planned" as Milestone["status"] });
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
+  const [dependencyManagerExpanded, setDependencyManagerExpanded] = useState(false);
+  const [hierarchyCollapsed, setHierarchyCollapsed] = useState(false);
   const [bulkShiftDays, setBulkShiftDays] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(900);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -140,6 +145,7 @@ export function PlanWorkspace({
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const hierarchyResizeRef = useRef<{ startX: number; width: number } | null>(null);
   const range = useMemo(() => calculateScheduleRange(project, phases, tasks, milestones), [project, phases, tasks, milestones]);
+  const hierarchyWidth = hierarchyCollapsed ? 76 : viewState.hierarchyWidth;
   const scale = useMemo(() => createTimelineScale(viewState.zoomMode, range, viewportWidth), [range, viewState.zoomMode, viewportWidth]);
   const today = todayDateOnly();
   const todayVisible = today >= range.startDate && today <= range.endDate;
@@ -211,11 +217,11 @@ export function PlanWorkspace({
     }
 
     const observer = new ResizeObserver(([entry]) => {
-      setViewportWidth(Math.max(320, entry.contentRect.width - viewState.hierarchyWidth));
+      setViewportWidth(Math.max(320, entry.contentRect.width - hierarchyWidth));
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [viewState.hierarchyWidth]);
+  }, [hierarchyWidth]);
 
   useEffect(() => {
     function move(event: globalThis.PointerEvent) {
@@ -287,7 +293,7 @@ export function PlanWorkspace({
   function setZoom(zoomMode: TimelineZoomMode) {
     const scroll = scrollRef.current;
     const previousCenterDate = scroll
-      ? xToDate(Math.max(0, scroll.scrollLeft - viewState.hierarchyWidth + viewportWidth / 2), range, scale)
+      ? xToDate(Math.max(0, scroll.scrollLeft - hierarchyWidth + viewportWidth / 2), range, scale)
       : range.startDate;
 
     setViewState((current) => ({ ...current, zoomMode }));
@@ -295,7 +301,7 @@ export function PlanWorkspace({
     window.requestAnimationFrame(() => {
       const nextScale = createTimelineScale(zoomMode, range, viewportWidth);
       const nextCenterX = dateToX(previousCenterDate, range, nextScale);
-      scroll?.scrollTo({ left: Math.max(0, nextCenterX - viewportWidth / 2 + viewState.hierarchyWidth), behavior: "smooth" });
+      scroll?.scrollTo({ left: Math.max(0, nextCenterX - viewportWidth / 2 + hierarchyWidth), behavior: "smooth" });
     });
   }
 
@@ -306,7 +312,7 @@ export function PlanWorkspace({
     }
 
     scrollRef.current?.scrollTo({
-      left: Math.max(0, dateToX(today, range, scale) - viewportWidth / 2 + viewState.hierarchyWidth),
+      left: Math.max(0, dateToX(today, range, scale) - viewportWidth / 2 + hierarchyWidth),
       behavior: "smooth"
     });
   }
@@ -336,7 +342,6 @@ export function PlanWorkspace({
   }
 
   function openTask(taskId: string) {
-    setSelectedTaskIds(new Set([taskId]));
     onOpenTask(taskId);
   }
 
@@ -440,6 +445,7 @@ export function PlanWorkspace({
 
     const created = await onCreateDependency({ taskId, dependsOnTaskId, type });
     if (created) {
+      setDependencyManagerExpanded(true);
       setUndoCommand({ label: "Undo dependency creation", run: () => onDeleteDependency(created.id) });
     }
   }
@@ -609,20 +615,30 @@ export function PlanWorkspace({
 
       <div
         ref={scrollRef}
-        className="plan-grid-scroll"
         data-plan-row-height={rowHeight}
-        style={{ "--hierarchy-width": `${viewState.hierarchyWidth}px`, "--timeline-width": `${scale.timelineWidth}px` } as CSSProperties}
+        className={hierarchyCollapsed ? "plan-grid-scroll hierarchy-collapsed" : "plan-grid-scroll"}
+        style={{ "--hierarchy-width": `${hierarchyWidth}px`, "--timeline-width": `${scale.timelineWidth}px` } as CSSProperties}
       >
-        <div className="plan-grid" style={{ width: `${viewState.hierarchyWidth + scale.timelineWidth}px` }}>
+        <div className="plan-grid" style={{ width: `${hierarchyWidth + scale.timelineWidth}px` }}>
           <div className="plan-hierarchy-header">
             <span>Work item</span>
             <span>Owner</span>
             <span>Dates</span>
             <span>Status</span>
             <button
+              aria-label={hierarchyCollapsed ? "Expand work item pane" : "Collapse work item pane"}
+              className="icon-button mini hierarchy-collapse-button"
+              type="button"
+              onClick={() => setHierarchyCollapsed((collapsed) => !collapsed)}
+              title={hierarchyCollapsed ? "Expand work items" : "Collapse work items"}
+            >
+              {hierarchyCollapsed ? <PanelLeftOpen size={14} aria-hidden="true" /> : <PanelLeftClose size={14} aria-hidden="true" />}
+            </button>
+            <button
               aria-label="Resize hierarchy pane"
               className="hierarchy-resize-handle"
               type="button"
+              disabled={hierarchyCollapsed}
               onPointerDown={(event) => {
                 hierarchyResizeRef.current = { startX: event.clientX, width: viewState.hierarchyWidth };
               }}
@@ -648,6 +664,7 @@ export function PlanWorkspace({
                 onToggleTask={toggleTask}
                 onOpenTask={openTask}
                 rowTop={index * rowHeight}
+                collapsed={hierarchyCollapsed}
               />
             ))}
           </div>
@@ -705,6 +722,8 @@ export function PlanWorkspace({
         onCreateDependency={createDependency}
         onUpdateDependency={onUpdateDependency}
         onDeleteDependency={onDeleteDependency}
+        expanded={dependencyManagerExpanded}
+        onExpandedChange={setDependencyManagerExpanded}
         onUndo={(dependency) => setUndoCommand({
           label: "Undo dependency removal",
           run: () => onCreateDependency({ taskId: dependency.taskId, dependsOnTaskId: dependency.dependsOnTaskId, type: dependency.type }).then(() => undefined)
@@ -926,10 +945,14 @@ function PlanToolbar({
         <label className="toolbar-select-label">
           <span className="sr-only">Timeline zoom</span>
           <select aria-label="Timeline zoom" value={zoomMode} onChange={(event) => onZoomChange(event.target.value as TimelineZoomMode)}>
+            <option value="hour">Hours</option>
             <option value="day">Day</option>
             <option value="week">Week</option>
             <option value="month">Month</option>
             <option value="quarter">Quarter</option>
+            <option value="year">Year</option>
+            <option value="decade">Decade</option>
+            <option value="century">Century</option>
             <option value="fit">Fit Project</option>
           </select>
         </label>
@@ -1146,7 +1169,8 @@ function HierarchyRow({
   onToggleCollapse,
   onToggleTask,
   onOpenTask,
-  rowTop
+  rowTop,
+  collapsed
 }: {
   row: ScheduleRow;
   users: User[];
@@ -1155,15 +1179,17 @@ function HierarchyRow({
   onToggleTask: (taskId: string) => void;
   onOpenTask: (taskId: string) => void;
   rowTop: number;
+  collapsed: boolean;
 }) {
   const taskOwner = row.type === "task" ? users.find((user) => user.id === row.task.assigneeId) : undefined;
   const selected = row.type === "task" && selectedTaskIds.has(row.task.id);
+  const taskSubtitle = row.type === "task" ? `${row.phase?.name ?? "Unassigned Phase"} · ${getTaskScheduleState(row.task)}` : "";
 
   return (
     <div
       aria-label={row.accessibilityLabel}
       aria-selected={row.type === "task" ? selected : undefined}
-      className={`plan-hierarchy-row row-${row.type}${selected ? " selected" : ""}`}
+      className={`plan-hierarchy-row row-${row.type}${selected ? " selected" : ""}${collapsed ? " compact" : ""}`}
       style={{ top: rowTop }}
       role="row"
     >
@@ -1181,9 +1207,9 @@ function HierarchyRow({
       {row.type === "task" ? (
         <>
           <input aria-label={`Select ${row.task.title}`} type="checkbox" checked={selectedTaskIds.has(row.task.id)} onChange={() => onToggleTask(row.task.id)} />
-          <button className="plan-row-title task-title" type="button" onClick={() => onOpenTask(row.task.id)} title={row.task.title}>
+          <button className="plan-row-title task-title" type="button" onClick={() => onOpenTask(row.task.id)} title={`${row.task.title} — ${taskSubtitle}`}>
             <span>{row.task.title}</span>
-            <small>{row.phase?.name ?? "Unassigned Phase"} · {getTaskScheduleState(row.task)}</small>
+            <small className="sr-only">{taskSubtitle}</small>
           </button>
           <span className="owner-pill" aria-label={`Owner ${taskOwner?.name ?? "Unassigned"}`}>{taskOwner?.avatarInitials ?? "UA"}</span>
           <span className="date-range-text">{formatTaskDateRange(row.task)}</span>
@@ -1402,38 +1428,46 @@ function BulkActionBar({
   return (
     <div className="bulk-action-bar">
       <strong>{selectedCount} selected</strong>
-      <button className="secondary-button" type="button" onClick={onSelectAll}>Select visible</button>
-      <button className="secondary-button" type="button" onClick={onClear}>Clear</button>
+      <button className="secondary-button compact" type="button" onClick={onSelectAll}>Select visible</button>
+      <button className="secondary-button compact" type="button" onClick={onClear}>Clear</button>
       {canManageSchedule && selectedCount > 0 ? (
         <>
-          <label>
-            Shift days
+          <label className="bulk-compact-field">
+            <span>Shift</span>
             <input type="number" value={bulkShiftDays} onChange={(event) => onBulkShiftDaysChange(Number(event.target.value) || 0)} />
           </label>
-          <button className="secondary-button" type="button" onClick={onShift}>Shift Dates</button>
-          <label>
-            Schedule date
+          <button className="secondary-button compact" type="button" onClick={onShift}>Shift Dates</button>
+          <label className="bulk-compact-field">
+            <span>Schedule</span>
             <input type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} />
           </label>
-          <button className="secondary-button" type="button" onClick={() => onSchedule(scheduleDate)}>Schedule</button>
-          <button className="secondary-button" type="button" onClick={onUnschedule}>Unschedule</button>
-          <select aria-label="Bulk assignee" onChange={(event) => event.target.value && onBatchField({ assigneeId: event.target.value === "__unassigned" ? null : event.target.value }, "Updated selected task assignees.")}>
-            <option value="">Set assignee</option>
-            <option value="__unassigned">Unassigned</option>
-            {users.filter((user) => user.role !== "client").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-          </select>
-          <select aria-label="Bulk status" onChange={(event) => event.target.value && onBatchField({ status: event.target.value as Task["status"] }, "Updated selected task statuses.")}>
-            <option value="">Set status</option>
-            {Object.entries(taskStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          <select aria-label="Bulk priority" onChange={(event) => event.target.value && onBatchField({ priority: event.target.value as Task["priority"] }, "Updated selected task priorities.")}>
-            <option value="">Set priority</option>
-            {["low", "medium", "high", "urgent"].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
-          </select>
-          <select aria-label="Bulk phase" onChange={(event) => event.target.value && onBatchField({ phaseId: event.target.value }, "Moved selected tasks to phase.")}>
-            <option value="">Move to phase</option>
-            {phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
-          </select>
+          <button className="secondary-button compact" type="button" onClick={() => onSchedule(scheduleDate)}>Schedule</button>
+          <button className="secondary-button compact" type="button" onClick={onUnschedule}>Unschedule</button>
+          <details className="bulk-more-menu">
+            <summary className="secondary-button compact" aria-label="More bulk actions">
+              <MoreHorizontal size={16} aria-hidden="true" />
+              More
+            </summary>
+            <div className="bulk-more-popover">
+              <select aria-label="Bulk assignee" onChange={(event) => event.target.value && onBatchField({ assigneeId: event.target.value === "__unassigned" ? null : event.target.value }, "Updated selected task assignees.")}>
+                <option value="">Set assignee</option>
+                <option value="__unassigned">Unassigned</option>
+                {users.filter((user) => user.role !== "client").map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+              <select aria-label="Bulk status" onChange={(event) => event.target.value && onBatchField({ status: event.target.value as Task["status"] }, "Updated selected task statuses.")}>
+                <option value="">Set status</option>
+                {Object.entries(taskStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select aria-label="Bulk priority" onChange={(event) => event.target.value && onBatchField({ priority: event.target.value as Task["priority"] }, "Updated selected task priorities.")}>
+                <option value="">Set priority</option>
+                {["low", "medium", "high", "urgent"].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+              </select>
+              <select aria-label="Bulk phase" onChange={(event) => event.target.value && onBatchField({ phaseId: event.target.value }, "Moved selected tasks to phase.")}>
+                <option value="">Move to phase</option>
+                {phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </select>
+            </div>
+          </details>
         </>
       ) : null}
     </div>
@@ -1664,6 +1698,8 @@ function DependencyManager({
   dependencies,
   tasks,
   canManageSchedule,
+  expanded,
+  onExpandedChange,
   onOpenTask,
   onCreateDependency,
   onUpdateDependency,
@@ -1673,6 +1709,8 @@ function DependencyManager({
   dependencies: TaskDependency[];
   tasks: Task[];
   canManageSchedule: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   onOpenTask: (taskId: string) => void;
   onCreateDependency: (taskId: string, dependsOnTaskId: string, type: TaskDependency["type"]) => Promise<void>;
   onUpdateDependency: (dependencyId: string, updates: Partial<TaskDependency>) => Promise<void>;
@@ -1690,11 +1728,22 @@ function DependencyManager({
   return (
     <section className="dependency-manager">
       <div className="dependency-manager-header">
-        <div>
-          <h2>Dependencies</h2>
-          <p>Manage dependency links when scheduling context is needed.</p>
-        </div>
-        {canManageSchedule && tasks.length > 1 ? (
+        <button
+          className="dependency-disclosure button-reset"
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => onExpandedChange(!expanded)}
+        >
+          {expanded ? <ChevronDown size={17} aria-hidden="true" /> : <ChevronRight size={17} aria-hidden="true" />}
+          <span>
+            <strong>Dependencies ({dependencies.length})</strong>
+            <small>Manage dependency links when scheduling context is needed.</small>
+          </span>
+        </button>
+      </div>
+      {expanded ? (
+        <div className="dependency-manager-body">
+          {canManageSchedule && tasks.length > 1 ? (
           <form
             className="dependency-create-form"
             onSubmit={(event) => {
@@ -1719,59 +1768,60 @@ function DependencyManager({
             </select>
             <button className="secondary-button" type="submit" disabled={!draft.taskId || !draft.dependsOnTaskId}>Add Dependency</button>
           </form>
-        ) : null}
-      </div>
-      {dependencies.length === 0 ? <p>No dependencies yet.</p> : (
-        <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Task</th>
-              <th>Depends on</th>
-              <th>Type</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dependencies.map((dependency) => {
-              const task = taskById.get(dependency.taskId);
-              const predecessor = taskById.get(dependency.dependsOnTaskId);
-
-              return (
-                <tr key={dependency.id}>
-                  <td><button className="link-button" type="button" onClick={() => dependency.taskId && onOpenTask(dependency.taskId)}>{task?.title ?? "Missing task"}</button></td>
-                  <td><button className="link-button" type="button" onClick={() => dependency.dependsOnTaskId && onOpenTask(dependency.dependsOnTaskId)}>{predecessor?.title ?? "Missing predecessor"}</button></td>
-                  <td>
-                    <select
-                      disabled={!canManageSchedule}
-                      value={dependency.type}
-                      onChange={(event) => void onUpdateDependency(dependency.id, { type: event.target.value as TaskDependency["type"] })}
-                    >
-                      <option value="finish_to_start">Finish to start</option>
-                      <option value="start_to_start">Start to start</option>
-                      <option value="finish_to_finish">Finish to finish</option>
-                    </select>
-                  </td>
-                  <td>
-                    <button
-                      className="link-button"
-                      disabled={!canManageSchedule}
-                      type="button"
-                      onClick={async () => {
-                        await onDeleteDependency(dependency.id);
-                        onUndo(dependency);
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </td>
+          ) : null}
+          {dependencies.length === 0 ? <p>No dependencies yet.</p> : (
+            <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Depends on</th>
+                  <th>Type</th>
+                  <th>Actions</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {dependencies.map((dependency) => {
+                  const task = taskById.get(dependency.taskId);
+                  const predecessor = taskById.get(dependency.dependsOnTaskId);
+
+                  return (
+                    <tr key={dependency.id}>
+                      <td><button className="link-button" type="button" onClick={() => dependency.taskId && onOpenTask(dependency.taskId)}>{task?.title ?? "Missing task"}</button></td>
+                      <td><button className="link-button" type="button" onClick={() => dependency.dependsOnTaskId && onOpenTask(dependency.dependsOnTaskId)}>{predecessor?.title ?? "Missing predecessor"}</button></td>
+                      <td>
+                        <select
+                          disabled={!canManageSchedule}
+                          value={dependency.type}
+                          onChange={(event) => void onUpdateDependency(dependency.id, { type: event.target.value as TaskDependency["type"] })}
+                        >
+                          <option value="finish_to_start">Finish to start</option>
+                          <option value="start_to_start">Start to start</option>
+                          <option value="finish_to_finish">Finish to finish</option>
+                        </select>
+                      </td>
+                      <td>
+                        <button
+                          className="link-button"
+                          disabled={!canManageSchedule}
+                          type="button"
+                          onClick={async () => {
+                            await onDeleteDependency(dependency.id);
+                            onUndo(dependency);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

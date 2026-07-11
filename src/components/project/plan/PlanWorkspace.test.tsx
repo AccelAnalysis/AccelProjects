@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Milestone, Phase, Project, Task, TaskDependency, User } from "../../../types";
@@ -147,16 +147,33 @@ describe("PlanWorkspace rendered regressions", () => {
   it("opens the same task context from hierarchy rows and Gantt bars", async () => {
     const onOpenTask = vi.fn();
     const { user } = renderPlan({ onOpenTask });
+    const firstTaskRow = screen.getByRole("row", { name: /First task/ });
 
-    await user.click(screen.getByTitle("First task"));
+    await user.click(within(firstTaskRow).getByRole("button", { name: /First task/ }));
 
     expect(onOpenTask).toHaveBeenCalledWith("task_a");
-    expect(screen.getByRole("row", { name: /First task/ })).toHaveAttribute("aria-selected", "true");
+    expect(firstTaskRow).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText(/^Open task: Second task/));
 
     expect(onOpenTask).toHaveBeenLastCalledWith("task_b");
-    expect(screen.getByRole("row", { name: /Second task/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("row", { name: /Second task/ })).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("uses checkboxes only for bulk selection and clears the compact toolbar", async () => {
+    const onOpenTask = vi.fn();
+    const { user } = renderPlan({ onOpenTask });
+
+    await user.click(screen.getByLabelText("Select First task"));
+
+    expect(onOpenTask).not.toHaveBeenCalled();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shift Dates" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
   });
 
   it("collapsing a phase removes matching hierarchy and timeline child rows together", async () => {
@@ -215,6 +232,7 @@ describe("PlanWorkspace rendered regressions", () => {
   it("creates and removes dependencies from rendered dependency controls", async () => {
     const { handlers, user } = renderPlan();
 
+    await user.click(screen.getByRole("button", { name: /Dependencies \(0\)/ }));
     await user.selectOptions(screen.getByLabelText("Dependency task"), "task_a");
     await user.selectOptions(screen.getByLabelText("Dependency predecessor"), "task_b");
     await user.click(screen.getByRole("button", { name: "Add Dependency" }));
@@ -234,10 +252,50 @@ describe("PlanWorkspace rendered regressions", () => {
     };
     const next = renderPlan({ dependencies: [dependency] });
 
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    await next.user.click(screen.getByRole("button", { name: /Dependencies \(1\)/ }));
     await next.user.click(screen.getByRole("button", { name: "Remove" }));
 
     expect(next.handlers.onDeleteDependency).toHaveBeenCalledWith("dependency_1");
     expect(await screen.findByRole("button", { name: /undo dependency removal/i })).toBeInTheDocument();
+  });
+
+  it("expands and collapses dependencies without losing dependency data", async () => {
+    const dependency: TaskDependency = {
+      id: "dependency_1",
+      taskId: "task_a",
+      dependsOnTaskId: "task_b",
+      type: "finish_to_start"
+    };
+    const { user } = renderPlan({ dependencies: [dependency] });
+    const disclosure = screen.getByRole("button", { name: /Dependencies \(1\)/ });
+
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Dependency task")).not.toBeInTheDocument();
+
+    await user.click(disclosure);
+
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Dependency task")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+
+    await user.click(disclosure);
+
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Dependency task")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Gantt bars constrained to the timeline pane and supports collapsing work items", async () => {
+    const { container, user } = renderPlan();
+
+    expect(container.querySelector(".plan-timeline-body .plan-task-bar")).toBeInTheDocument();
+    expect(container.querySelector(".plan-hierarchy-body .plan-task-bar")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Collapse work item pane" }));
+
+    expect(container.querySelector(".plan-grid-scroll")).toHaveClass("hierarchy-collapsed");
+    expect(screen.getByRole("button", { name: "Expand work item pane" })).toBeInTheDocument();
   });
 
   it("applies bulk schedule changes and supports undo", async () => {
