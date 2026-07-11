@@ -21,7 +21,7 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import { LoginPage } from "./auth/LoginPage";
 import { AdminPage } from "./pages/AdminPage";
 import { CustomerOrderPage } from "./pages/CustomerOrderPage";
-import { DashboardPage } from "./pages/DashboardPage";
+import { HomePage } from "./pages/HomePage";
 import {
   ClientsPage,
   DocumentsPage,
@@ -300,7 +300,7 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   }
 
   if (path === "/") {
-    return <DashboardPage {...props} />;
+    return <HomePage {...props} />;
   }
 
   if (path === "/clients") {
@@ -347,7 +347,7 @@ function getRoute(props: ProjectPageProps, pathname: string) {
     return <PaymentCancelPage />;
   }
 
-  return <DashboardPage {...props} />;
+  return <HomePage {...props} />;
 }
 
 function TopHeader({
