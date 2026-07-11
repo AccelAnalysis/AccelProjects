@@ -12,7 +12,7 @@ import {
   Plus,
   X
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   Client,
   Milestone,
@@ -292,15 +292,34 @@ export function TaskDetailPanel({
   onAddComment: (taskId: string, body: string) => void;
 }) {
   const [newComment, setNewComment] = useTaskCommentDraft(task.id);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onCloseRef.current();
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [task.id]);
 
   return (
-    <aside className="detail-panel">
+    <aside className="detail-panel" role="dialog" aria-modal="true" aria-label={`Task detail: ${task.title}`}>
       <div className="detail-panel-header">
         <div>
           <p className="eyebrow">{getPhaseName(phases, task.phaseId)}</p>
           <h2>{task.title}</h2>
         </div>
-        <button className="icon-button" type="button" onClick={onClose} aria-label="Close task detail">
+        <button ref={closeButtonRef} className="icon-button" type="button" onClick={onClose} aria-label="Close task detail">
           <X size={18} aria-hidden="true" />
         </button>
       </div>
