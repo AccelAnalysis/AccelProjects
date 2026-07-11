@@ -384,6 +384,9 @@ export const initialProjectState: ProjectState = {
   ],
   projectCommunications: [],
   projectCalendarEvents: [],
+  clientProgressReports: [],
+  clientReportSnapshots: [],
+  clientReportArtifacts: [],
   projectVersions: [
     {
       id: "version_hampton_initial",

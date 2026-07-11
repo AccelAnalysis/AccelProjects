@@ -5,6 +5,7 @@ export const projectTabs = [
   { id: "risks", label: "Risks" },
   { id: "files", label: "Files" },
   { id: "messages", label: "Messages" },
+  { id: "reports", label: "Reports" },
   { id: "metrics", label: "Metrics" },
   { id: "team", label: "Team" },
   { id: "settings", label: "Settings" }

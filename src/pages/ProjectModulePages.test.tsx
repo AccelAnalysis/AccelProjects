@@ -300,6 +300,9 @@ const projectState: ProjectState = {
   activityEvents: [],
   projectCommunications: [],
   projectCalendarEvents: [],
+  clientProgressReports: [],
+  clientReportSnapshots: [],
+  clientReportArtifacts: [],
   projectVersions: []
 };
 

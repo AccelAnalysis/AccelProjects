@@ -109,6 +109,29 @@ describe("Microsoft Graph project service", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("includes report PDF attachments only when explicitly enabled", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(202));
+
+    await sendProjectEmailViaGraph({
+      communication: communication({ attachmentRefs: [{ artifactId: "artifact_1" }] }),
+      env,
+      getAccessToken: async () => "token",
+      fetchImpl,
+      allowAttachments: true,
+      attachments: [{ name: "report.pdf", contentType: "application/pdf", contentBytes: Buffer.from("%PDF-test") }]
+    });
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.message.attachments).toEqual([
+      expect.objectContaining({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: "report.pdf",
+        contentType: "application/pdf",
+        contentBytes: Buffer.from("%PDF-test").toString("base64")
+      })
+    ]);
+  });
+
   it("creates and updates calendar events with stable transaction fields", async () => {
     const createFetch = vi.fn().mockResolvedValue(response(201, { id: "graph_1", iCalUId: "ical", webLink: "https://outlook.example/event", changeKey: "ck1" }));
     const created = await createCalendarEventViaGraph({

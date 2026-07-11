@@ -97,6 +97,18 @@ function calendarEventRef(uid: string, id = "cal_1") {
   return doc(dbFor(uid), ...orgPath("projects", projectId, "calendarEvents", id));
 }
 
+function reportRef(uid: string, id = "report_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", id));
+}
+
+function reportSnapshotRef(uid: string, reportId = "report_1", id = "snapshot_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", reportId, "snapshots", id));
+}
+
+function reportArtifactRef(uid: string, reportId = "report_1", id = "artifact_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", reportId, "artifacts", id));
+}
+
 function communicationDraft(id: string, actorId: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
@@ -326,6 +338,48 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(updateDoc(calendarEventRef("lead_pm"), { graphEventId: "graph_1", status: "scheduled", lastSyncedAt: "2026-07-10T02:00:00.000Z" }));
     await assertFails(updateDoc(calendarEventRef("lead_pm"), { projectId: otherProjectId, updatedAt: "2026-07-10T02:00:00.000Z" }));
     await assertSucceeds(updateDoc(calendarEventRef("lead_pm"), { title: "Updated review", updatedBy: "lead_pm", updatedAt: "2026-07-10T02:00:00.000Z" }));
+  });
+
+  it("lets project readers view report snapshots but keeps browser report writes server-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1")), {
+        id: "report_1",
+        organizationId: orgId,
+        projectId,
+        title: "Client report",
+        status: "approved",
+        latestApprovedSnapshotId: "snapshot_1",
+        createdBy: "owner_pm",
+        createdAt: "2026-07-10T00:00:00.000Z",
+        updatedBy: "owner_pm",
+        updatedAt: "2026-07-10T00:00:00.000Z"
+      });
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1", "snapshots", "snapshot_1")), {
+        id: "snapshot_1",
+        projectId,
+        reportId: "report_1",
+        contentHash: "abc",
+        approvedAt: "2026-07-10T00:00:00.000Z"
+      });
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1", "artifacts", "artifact_1")), {
+        id: "artifact_1",
+        projectId,
+        reportId: "report_1",
+        snapshotId: "snapshot_1",
+        sha256: "def"
+      });
+    });
+
+    await assertSucceeds(getDoc(reportRef("owner_pm")));
+    await assertSucceeds(getDoc(reportSnapshotRef("lead_pm")));
+    await assertSucceeds(getDoc(reportArtifactRef("contributor")));
+    await assertFails(getDoc(reportRef("client")));
+    await assertFails(setDoc(reportRef("owner_pm", "report_2"), { id: "report_2", projectId, title: "Forged draft" }));
+    await assertFails(updateDoc(reportRef("owner_pm"), { title: "Mutated approved report" }));
+    await assertFails(setDoc(reportSnapshotRef("owner_pm", "report_1", "snapshot_2"), { id: "snapshot_2", projectId, reportId: "report_1", contentHash: "forged" }));
+    await assertFails(updateDoc(reportSnapshotRef("owner_pm"), { contentHash: "changed" }));
+    await assertFails(setDoc(reportArtifactRef("owner_pm", "report_1", "artifact_2"), { id: "artifact_2", projectId, reportId: "report_1", snapshotId: "snapshot_1" }));
   });
 
   it("keeps unknown project communication paths denied by default", async () => {

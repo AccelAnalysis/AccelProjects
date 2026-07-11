@@ -85,6 +85,9 @@ describe("HomePage", () => {
         activityEvents: [],
         projectCommunications: [],
         projectCalendarEvents: [],
+        clientProgressReports: [],
+        clientReportSnapshots: [],
+        clientReportArtifacts: [],
         projectVersions: []
       }
     });

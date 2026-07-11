@@ -37,6 +37,11 @@ describe("project route helpers", () => {
       projectId: "project_1",
       tab: "tasks"
     });
+    expect(parseProjectRoute("/projects/project_1/reports")).toEqual({
+      type: "workspace",
+      projectId: "project_1",
+      tab: "reports"
+    });
   });
 
   it("parses version history links outside the project tabs", () => {

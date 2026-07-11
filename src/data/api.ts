@@ -4,6 +4,9 @@ import type {
   EmailPreview,
   EventLog,
   EventLogInput,
+  ClientProgressReport,
+  ClientReportSnapshot,
+  ClientReportArtifact,
   Order,
   OrderInput,
   OrderStatus,
@@ -132,6 +135,91 @@ export function sendProjectCommunication(projectId: string, communicationId: str
   }>(`/api/projects/${projectId}/communications/${communicationId}/send`, {
     method: "POST",
     body: JSON.stringify(options)
+  });
+}
+
+export type ClientReportInput = Pick<
+  ClientProgressReport,
+  | "title"
+  | "reportingPeriodStart"
+  | "reportingPeriodEnd"
+  | "executiveSummary"
+  | "progressSummary"
+  | "nextSteps"
+  | "clientActions"
+  | "highlights"
+  | "risks"
+  | "milestones"
+  | "completedTasks"
+  | "upcomingTasks"
+  | "includeBudget"
+>;
+
+export type ReportEmailInput = {
+  subject: string;
+  bodyText: string;
+  toRecipients: ProjectRecipient[];
+  ccRecipients: ProjectRecipient[];
+  bccRecipients: ProjectRecipient[];
+};
+
+export function listProjectReports(projectId: string) {
+  return request<{ reports: ClientProgressReport[] }>(`/api/projects/${projectId}/reports`);
+}
+
+export function createClientProgressReport(projectId: string, input: ClientReportInput) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateClientProgressReport(projectId: string, reportId: string, input: ClientReportInput) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function submitClientProgressReport(projectId: string, reportId: string) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/submit`, {
+    method: "POST"
+  });
+}
+
+export function approveClientProgressReport(projectId: string, reportId: string) {
+  return request<{ report: ClientProgressReport; snapshot: ClientReportSnapshot }>(`/api/projects/${projectId}/reports/${reportId}/approve`, {
+    method: "POST"
+  });
+}
+
+export async function downloadClientReportPdf(projectId: string, reportId: string, snapshotId: string) {
+  const response = await fetch(`/api/projects/${projectId}/reports/${reportId}/snapshots/${snapshotId}/pdf`, {
+    headers: await getAuthenticatedHeaders()
+  });
+
+  if (!response.ok) {
+    let data: unknown = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+    throw new Error(getApiErrorMessage(response.status, data));
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "client-progress-report.pdf",
+    artifactId: response.headers.get("x-accelprojects-artifact-id"),
+    sha256: response.headers.get("x-accelprojects-content-sha256")
+  };
+}
+
+export function emailClientReportSnapshot(projectId: string, reportId: string, snapshotId: string, input: ReportEmailInput) {
+  return request<{ communication: ProjectCommunication; artifact: ClientReportArtifact }>(`/api/projects/${projectId}/reports/${reportId}/snapshots/${snapshotId}/email`, {
+    method: "POST",
+    body: JSON.stringify(input)
   });
 }
 

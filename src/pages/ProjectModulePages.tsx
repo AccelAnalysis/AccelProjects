@@ -1,5 +1,5 @@
 import { Bell, CalendarDays, Download, ExternalLink, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ActivityFeed,
   DocumentHub,
@@ -15,16 +15,23 @@ import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
 import {
   cancelProjectCalendarEvent,
+  approveClientProgressReport,
   createProjectCalendarDraft,
   createProjectCalendarEvent,
   createProjectCommunication,
+  createClientProgressReport,
+  downloadClientReportPdf,
+  emailClientReportSnapshot,
   sendProjectCommunication,
+  submitClientProgressReport,
+  updateClientProgressReport,
   updateProjectCalendarEvent,
+  type ClientReportInput,
   type ProjectCalendarEventInput,
   type ProjectCommunicationInput
 } from "../data/api";
 import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath, type ProjectTabId } from "../routing/projectRoutes";
-import type { NotificationPreferences, ProjectCalendarEvent, ProjectCommunication, ProjectRecipient, Task } from "../types";
+import type { ClientProgressReport, ClientReportItem, ClientReportSnapshot, NotificationPreferences, ProjectCalendarEvent, ProjectCommunication, ProjectRecipient, Task } from "../types";
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
@@ -46,6 +53,9 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
     communications: projectState.projectCommunications.filter((communication) => communication.projectId === projectId),
     calendarEvents: projectState.projectCalendarEvents.filter((event) => event.projectId === projectId),
+    reports: projectState.clientProgressReports.filter((report) => report.projectId === projectId),
+    reportSnapshots: projectState.clientReportSnapshots.filter((snapshot) => snapshot.projectId === projectId),
+    reportArtifacts: projectState.clientReportArtifacts.filter((artifact) => artifact.projectId === projectId),
     versions: projectState.projectVersions.filter((version) => version.projectId === projectId),
     dependencies: projectState.taskDependencies.filter((dependency) => (
       projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
@@ -821,6 +831,356 @@ export function MessagesPage({ projectState, selectedProjectId, clientPreview, c
         </div>
       ) : null}
     </section>
+  );
+}
+
+function reportItemFromTask(task: Task, ownerName: string): ClientReportItem {
+  return {
+    id: task.id,
+    title: task.title,
+    status: taskStatusLabels[task.status] ?? task.status,
+    dueDate: task.dueDate ?? task.startDate ?? "",
+    owner: ownerName
+  };
+}
+
+function textLinesToList(value: string) {
+  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function listToText(value: string[]) {
+  return value.join("\n");
+}
+
+function buildDefaultReportInput(projectState: ProjectPageProps["projectState"], projectId: string): ClientReportInput {
+  const { project, tasks, risks, milestones } = projectSlices(projectState, projectId);
+  const today = todayDateOnly();
+  const priorWeek = new Date(`${today}T00:00:00.000Z`);
+  priorWeek.setUTCDate(priorWeek.getUTCDate() - 7);
+  const userName = (userId: string | null) => projectState.users.find((user) => user.id === userId)?.name ?? "";
+  const completedTasks = tasks
+    .filter((task) => task.status === "done")
+    .slice(0, 12)
+    .map((task) => reportItemFromTask(task, userName(task.assigneeId)));
+  const upcomingTasks = tasks
+    .filter((task) => task.status !== "done")
+    .sort((left, right) => compareDateOnly(left.dueDate, right.dueDate))
+    .slice(0, 12)
+    .map((task) => reportItemFromTask(task, userName(task.assigneeId)));
+
+  return {
+    title: `${project?.name ?? "Project"} Progress Report`,
+    reportingPeriodStart: priorWeek.toISOString().slice(0, 10),
+    reportingPeriodEnd: today,
+    executiveSummary: project?.summary ?? "",
+    progressSummary: "",
+    nextSteps: "",
+    clientActions: [],
+    highlights: [],
+    risks: risks.filter((risk) => risk.status !== "resolved").slice(0, 8).map((risk) => ({
+      id: risk.id,
+      title: risk.title,
+      status: risk.severity,
+      dueDate: "",
+      owner: ""
+    })),
+    milestones: milestones.slice(0, 8).map((milestone) => ({
+      id: milestone.id,
+      title: milestone.name,
+      status: milestone.status,
+      dueDate: milestone.date,
+      owner: ""
+    })),
+    completedTasks,
+    upcomingTasks,
+    includeBudget: false
+  };
+}
+
+function reportStatusLabel(status: ClientProgressReport["status"]) {
+  return status === "ready_for_review" ? "Ready for review" : status[0].toUpperCase() + status.slice(1);
+}
+
+export function ReportsPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+  const { project, client, reports, reportSnapshots } = projectSlices(projectState, selectedProjectId);
+  const [localReports, setLocalReports] = useState<ClientProgressReport[]>(reports);
+  const [localSnapshots, setLocalSnapshots] = useState<ClientReportSnapshot[]>(reportSnapshots);
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [form, setForm] = useState<ClientReportInput>(() => buildDefaultReportInput(projectState, selectedProjectId));
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [emailSnapshotId, setEmailSnapshotId] = useState<string | null>(null);
+  const [emailForm, setEmailForm] = useState<ProjectCommunicationInput>(defaultEmailForm);
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const canManageReports = canViewInternal && canManage && !clientPreview;
+
+  useEffect(() => {
+    setLocalReports(reports);
+    setLocalSnapshots(reportSnapshots);
+  }, [reports, reportSnapshots]);
+
+  if (!project) {
+    return <ProjectUnavailable />;
+  }
+  const currentProject = project;
+
+  function openDraft(report?: ClientProgressReport) {
+    setError("");
+    setNotice("");
+    setEditingReportId(report?.id ?? null);
+    setForm(report ? {
+      title: report.title,
+      reportingPeriodStart: report.reportingPeriodStart,
+      reportingPeriodEnd: report.reportingPeriodEnd,
+      executiveSummary: report.executiveSummary,
+      progressSummary: report.progressSummary,
+      nextSteps: report.nextSteps,
+      clientActions: report.clientActions,
+      highlights: report.highlights,
+      risks: report.risks,
+      milestones: report.milestones,
+      completedTasks: report.completedTasks,
+      upcomingTasks: report.upcomingTasks,
+      includeBudget: report.includeBudget
+    } : buildDefaultReportInput(projectState, selectedProjectId));
+    setDraftOpen(true);
+  }
+
+  async function saveDraft(event: FormEvent) {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+    try {
+      const saved = editingReportId
+        ? await updateClientProgressReport(selectedProjectId, editingReportId, form)
+        : await createClientProgressReport(selectedProjectId, form);
+      setLocalReports((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setDraftOpen(false);
+      setNotice("Report draft saved.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report draft could not be saved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function submitReport(report: ClientProgressReport) {
+    setWorking(true);
+    setError("");
+    try {
+      const submitted = await submitClientProgressReport(selectedProjectId, report.id);
+      setLocalReports((current) => current.map((item) => item.id === submitted.id ? submitted : item));
+      setNotice("Report submitted for approval.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report could not be submitted.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function approve(report: ClientProgressReport) {
+    setWorking(true);
+    setError("");
+    try {
+      const result = await approveClientProgressReport(selectedProjectId, report.id);
+      setLocalReports((current) => current.map((item) => item.id === result.report.id ? result.report : item));
+      setLocalSnapshots((current) => [result.snapshot, ...current.filter((item) => item.id !== result.snapshot.id)]);
+      setNotice("Report approved and immutable snapshot created.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report could not be approved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function downloadPdf(report: ClientProgressReport, snapshotId: string) {
+    setWorking(true);
+    setError("");
+    try {
+      const result = await downloadClientReportPdf(selectedProjectId, report.id, snapshotId);
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(`PDF generated. Artifact ${result.artifactId ?? "recorded"}${result.sha256 ? ` · ${result.sha256.slice(0, 12)}` : ""}.`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report PDF could not be generated.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function openEmail(report: ClientProgressReport, snapshotId: string) {
+    setEmailSnapshotId(snapshotId);
+    setEmailForm({
+      ...defaultEmailForm,
+      subject: `${currentProject.name} progress report`,
+      bodyText: "Attached is the approved project progress report.",
+      toRecipients: client?.email ? [{ name: client.contactName, email: client.email }] : []
+    });
+  }
+
+  async function sendReportEmail(event: FormEvent) {
+    event.preventDefault();
+    const report = localReports.find((item) => item.latestApprovedSnapshotId === emailSnapshotId);
+    if (!report || !emailSnapshotId) {
+      setError("Approved report snapshot was not found.");
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    try {
+      await emailClientReportSnapshot(selectedProjectId, report.id, emailSnapshotId, emailForm);
+      setEmailSnapshotId(null);
+      setNotice("Report email with PDF attachment accepted by Microsoft 365 for delivery.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report email could not be sent.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const sortedReports = [...localReports].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+  return (
+    <section className="panel reports-workspace">
+      <div className="panel-header">
+        <div>
+          <h1>Reports</h1>
+          <p>Client progress reports, approval snapshots, PDFs, and delivery audit.</p>
+        </div>
+        {canManageReports ? (
+          <button className="action-button" type="button" onClick={() => openDraft()}>
+            <FileText size={18} aria-hidden="true" />
+            New Report
+          </button>
+        ) : null}
+      </div>
+      {notice ? <p className="form-success" role="status">{notice}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {sortedReports.length === 0 ? (
+        <div className="empty-state">
+          <h2>No client reports yet.</h2>
+          <p>Create a report draft to produce approved PDF snapshots for client delivery.</p>
+        </div>
+      ) : (
+        <div className="communication-list">
+          {sortedReports.map((report) => {
+            const snapshotId = report.latestApprovedSnapshotId;
+            const snapshot = snapshotId ? localSnapshots.find((item) => item.id === snapshotId) : null;
+
+            return (
+              <article className="communication-row report-row" key={report.id}>
+                <FileText size={18} aria-hidden="true" />
+                <div>
+                  <strong>{report.title}</strong>
+                  <span>{formatDate(report.reportingPeriodStart)} to {formatDate(report.reportingPeriodEnd)} · updated {formatDate(report.updatedAt)}</span>
+                  {snapshot ? <em>Approved snapshot hash {snapshot.contentHash.slice(0, 16)}</em> : null}
+                </div>
+                <div className="button-row">
+                  <StatusBadge label={reportStatusLabel(report.status)} tone={report.status === "approved" ? "success" : report.status === "ready_for_review" ? "warning" : "info"} />
+                  {canManageReports && report.status !== "approved" ? <button className="secondary-button compact-button" type="button" onClick={() => openDraft(report)} disabled={working}>Edit</button> : null}
+                  {canManageReports && report.status === "draft" ? <button className="secondary-button compact-button" type="button" onClick={() => void submitReport(report)} disabled={working}>Submit</button> : null}
+                  {canManageReports && report.status === "ready_for_review" ? <button className="secondary-button compact-button" type="button" onClick={() => void approve(report)} disabled={working}>Approve</button> : null}
+                  {snapshotId ? (
+                    <>
+                      <button className="secondary-button compact-button" type="button" onClick={() => void downloadPdf(report, snapshotId)} disabled={working}>PDF</button>
+                      <button className="secondary-button compact-button" type="button" onClick={() => onNavigate(`/projects/${selectedProjectId}/reports/${report.id}/print/${snapshotId}`)}>Print</button>
+                      {canManageReports ? <button className="secondary-button compact-button" type="button" onClick={() => openEmail(report, snapshotId)} disabled={working}>Email</button> : null}
+                    </>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {draftOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setDraftOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="report-draft-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="report-draft-heading">{editingReportId ? "Edit Report Draft" : "New Report Draft"}</h2>
+              <button className="icon-button" type="button" aria-label="Close report draft" onClick={() => setDraftOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            <form className="settings-form" onSubmit={saveDraft}>
+              <label>Title<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /></label>
+              <div className="form-grid two">
+                <label>Period start<input type="date" value={form.reportingPeriodStart} onChange={(event) => setForm({ ...form, reportingPeriodStart: event.target.value })} required /></label>
+                <label>Period end<input type="date" value={form.reportingPeriodEnd} onChange={(event) => setForm({ ...form, reportingPeriodEnd: event.target.value })} required /></label>
+              </div>
+              <label>Executive summary<textarea rows={4} value={form.executiveSummary} onChange={(event) => setForm({ ...form, executiveSummary: event.target.value })} /></label>
+              <label>Progress summary<textarea rows={4} value={form.progressSummary} onChange={(event) => setForm({ ...form, progressSummary: event.target.value })} /></label>
+              <label>Highlights<textarea rows={3} value={listToText(form.highlights)} onChange={(event) => setForm({ ...form, highlights: textLinesToList(event.target.value) })} /></label>
+              <label>Client actions<textarea rows={3} value={listToText(form.clientActions)} onChange={(event) => setForm({ ...form, clientActions: textLinesToList(event.target.value) })} /></label>
+              <label>Next steps<textarea rows={4} value={form.nextSteps} onChange={(event) => setForm({ ...form, nextSteps: event.target.value })} /></label>
+              <p className="panel-note">Tasks, milestones, and risks are prefilled from the current project. Edit this report draft before approval if the client-facing set should differ.</p>
+              <button className="action-button" type="submit" disabled={working}>{working ? "Saving..." : "Save Draft"}</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {emailSnapshotId ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setEmailSnapshotId(null)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="report-email-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="report-email-heading">Email Approved Report</h2>
+              <button className="icon-button" type="button" aria-label="Close report email" onClick={() => setEmailSnapshotId(null)} disabled={working}><X size={18} /></button>
+            </div>
+            <form className="settings-form" onSubmit={sendReportEmail}>
+              <label>To<input value={recipientText(emailForm.toRecipients)} onChange={(event) => setEmailForm({ ...emailForm, toRecipients: parseRecipientText(event.target.value) })} required /></label>
+              <label>CC<input value={recipientText(emailForm.ccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, ccRecipients: parseRecipientText(event.target.value) })} /></label>
+              <label>BCC<input value={recipientText(emailForm.bccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, bccRecipients: parseRecipientText(event.target.value) })} /></label>
+              <label>Subject<input value={emailForm.subject} onChange={(event) => setEmailForm({ ...emailForm, subject: event.target.value })} required /></label>
+              <label>Message<textarea rows={5} value={emailForm.bodyText} onChange={(event) => setEmailForm({ ...emailForm, bodyText: event.target.value })} required /></label>
+              <p className="panel-note">The server generates and attaches the approved PDF snapshot. Microsoft 365 Accepted means the request was accepted for delivery, not final recipient delivery.</p>
+              <button className="action-button" type="submit" disabled={working}>{working ? "Sending..." : "Send PDF Attachment"}</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function ReportPrintPage({ projectState, selectedProjectId, reportId, snapshotId }: ProjectPageProps & { reportId: string; snapshotId: string }) {
+  const snapshot = projectState.clientReportSnapshots.find((item) => item.projectId === selectedProjectId && item.reportId === reportId && item.id === snapshotId);
+
+  if (!snapshot) {
+    return <ProjectUnavailable />;
+  }
+
+  return (
+    <main className="report-print-page">
+      <header>
+        <p>{String(snapshot.client.name ?? "Client")} · {snapshot.reportingPeriodStart} to {snapshot.reportingPeriodEnd}</p>
+        <h1>{snapshot.title}</h1>
+        <span>Approved {formatDate(snapshot.approvedAt)} · {snapshot.contentHash.slice(0, 16)}</span>
+      </header>
+      <section>
+        <h2>Executive Summary</h2>
+        <p>{snapshot.sections.executiveSummary || "No update provided."}</p>
+        <h2>Progress Summary</h2>
+        <p>{snapshot.sections.progressSummary || "No update provided."}</p>
+        <h2>Highlights</h2>
+        <ul>{snapshot.sections.highlights.map((item) => <li key={item}>{item}</li>)}</ul>
+        <h2>Completed Work</h2>
+        <ul>{snapshot.sections.completedTasks.map((item) => <li key={item.id}>{item.title} {item.status ? `· ${item.status}` : ""}</li>)}</ul>
+        <h2>Upcoming Work</h2>
+        <ul>{snapshot.sections.upcomingTasks.map((item) => <li key={item.id}>{item.title} {item.dueDate ? `· ${formatDate(item.dueDate)}` : ""}</li>)}</ul>
+        <h2>Risks and Watch Items</h2>
+        <ul>{snapshot.sections.risks.map((item) => <li key={item.id}>{item.title} {item.status ? `· ${item.status}` : ""}</li>)}</ul>
+        <h2>Client Actions</h2>
+        <ul>{snapshot.sections.clientActions.map((item) => <li key={item}>{item}</li>)}</ul>
+        <h2>Next Steps</h2>
+        <p>{snapshot.sections.nextSteps || "No update provided."}</p>
+      </section>
+    </main>
   );
 }
 

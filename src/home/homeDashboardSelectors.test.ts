@@ -174,6 +174,9 @@ function makeState(overrides: Partial<ProjectState> = {}): ProjectState {
     ],
     projectCommunications: [],
     projectCalendarEvents: [],
+    clientProgressReports: [],
+    clientReportSnapshots: [],
+    clientReportArtifacts: [],
     projectVersions: [],
     ...overrides
   };

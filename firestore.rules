@@ -521,6 +521,21 @@ service cloud.firestore {
           allow delete: if false;
         }
 
+        match /reports/{reportId} {
+          allow read: if canReadProject(organizationId, projectId);
+          allow create, update, delete: if false;
+
+          match /snapshots/{snapshotId} {
+            allow read: if canReadProject(organizationId, projectId);
+            allow create, update, delete: if false;
+          }
+
+          match /artifacts/{artifactId} {
+            allow read: if canReadProject(organizationId, projectId);
+            allow create, update, delete: if false;
+          }
+        }
+
         match /versions/{versionId} {
           allow read: if canReadProject(organizationId, projectId);
           allow create: if canCreateProjectVersion(organizationId, projectId);

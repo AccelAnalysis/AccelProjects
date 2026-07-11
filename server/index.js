@@ -19,6 +19,15 @@ import {
   sendCommunication,
   updateCalendarEvent
 } from "./projectCommunicationService.js";
+import {
+  approveReport,
+  createReportDraft,
+  emailReportSnapshot,
+  generateReportPdfArtifact,
+  listProjectReports,
+  submitReportForReview,
+  updateReportDraft
+} from "./projectReportService.js";
 import { orderReceivedSmsTemplate } from "./smsTemplates.js";
 import { validateTwilioSmsConfig } from "./twilioSmsConfig.js";
 import { sendTwilioSms } from "./twilioSmsService.js";
@@ -302,6 +311,72 @@ app.use("/api", requireFirebaseAuth);
 app.get("/api/projects/:projectId/communications-workspace", requireProjectRead, async (request, response) => {
   const workspace = await listProjectCommunicationWorkspace(request.params.projectId);
   response.json(workspace);
+});
+
+app.get("/api/projects/:projectId/reports", requireProjectRead, async (request, response) => {
+  try {
+    response.json(await listProjectReports(request.params.projectId));
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Reports could not be loaded" });
+  }
+});
+
+app.post("/api/projects/:projectId/reports", requireProjectCommunication, async (request, response) => {
+  try {
+    const report = await createReportDraft(request.params.projectId, request.auth, request.body);
+    response.status(201).json(report);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report draft could not be created", code: error.code || "report_create_failed" });
+  }
+});
+
+app.patch("/api/projects/:projectId/reports/:reportId", requireProjectCommunication, async (request, response) => {
+  try {
+    const report = await updateReportDraft(request.params.projectId, request.params.reportId, request.auth, request.body);
+    response.status(200).json(report);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report draft could not be updated", code: error.code || "report_update_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/reports/:reportId/submit", requireProjectCommunication, async (request, response) => {
+  try {
+    const report = await submitReportForReview(request.params.projectId, request.params.reportId, request.auth);
+    response.status(200).json(report);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report could not be submitted", code: error.code || "report_submit_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/reports/:reportId/approve", requireProjectCommunication, async (request, response) => {
+  try {
+    const result = await approveReport(request.params.projectId, request.params.reportId, request.auth);
+    response.status(200).json(result);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report could not be approved", code: error.code || "report_approve_failed" });
+  }
+});
+
+app.get("/api/projects/:projectId/reports/:reportId/snapshots/:snapshotId/pdf", requireProjectRead, async (request, response) => {
+  try {
+    const result = await generateReportPdfArtifact(request.params.projectId, request.params.reportId, request.params.snapshotId, request.auth, "download");
+    response.setHeader("Content-Type", result.artifact.contentType);
+    response.setHeader("Content-Disposition", `attachment; filename="${result.artifact.filename}"`);
+    response.setHeader("X-AccelProjects-Artifact-Id", result.artifact.id);
+    response.setHeader("X-AccelProjects-Content-SHA256", result.artifact.sha256);
+    response.status(200).send(result.buffer);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report PDF could not be generated", code: error.code || "report_pdf_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/reports/:reportId/snapshots/:snapshotId/email", requireProjectCommunication, async (request, response) => {
+  try {
+    const result = await emailReportSnapshot(request.params.projectId, request.params.reportId, request.params.snapshotId, request.auth, request.body);
+    response.status(200).json(result);
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report email could not be sent", code: error.code || "report_email_failed" });
+  }
 });
 
 app.post("/api/projects/:projectId/communications", requireProjectCommunication, async (request, response) => {

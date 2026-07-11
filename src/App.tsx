@@ -35,6 +35,8 @@ import {
   OverviewPage,
   PlaceholderPage,
   PlanPage,
+  ReportPrintPage,
+  ReportsPage,
   ProjectSettingsPage,
   ProjectsPage,
   RisksPage,
@@ -191,6 +193,9 @@ const emptyProjectState: ProjectState = {
   activityEvents: [],
   projectCommunications: [],
   projectCalendarEvents: [],
+  clientProgressReports: [],
+  clientReportSnapshots: [],
+  clientReportArtifacts: [],
   projectVersions: []
 };
 
@@ -203,6 +208,11 @@ function getFatalDependencyValidationMessage(tasks: Task[], dependencies: TaskDe
 
 function getRoute(props: ProjectPageProps, pathname: string) {
   const path = pathname;
+  const reportPrintMatch = path.match(/^\/projects\/([^/]+)\/reports\/([^/]+)\/print\/([^/]+)$/);
+  if (reportPrintMatch) {
+    return <ReportPrintPage {...props} selectedProjectId={decodeURIComponent(reportPrintMatch[1])} reportId={decodeURIComponent(reportPrintMatch[2])} snapshotId={decodeURIComponent(reportPrintMatch[3])} />;
+  }
+
   const projectRoute = parseProjectRoute(path);
   const developmentToolsEnabled = props.developmentToolsEnabled && props.profileRole === "admin";
 
@@ -289,6 +299,10 @@ function getRoute(props: ProjectPageProps, pathname: string) {
 
     if (projectRoute.tab === "messages") {
       return <MessagesPage {...props} />;
+    }
+
+    if (projectRoute.tab === "reports") {
+      return <ReportsPage {...props} />;
     }
 
     if (projectRoute.tab === "files") {
