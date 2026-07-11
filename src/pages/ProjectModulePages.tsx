@@ -1,5 +1,5 @@
-import { Bell, Download, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Bell, CalendarDays, Download, ExternalLink, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle, X } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ActivityFeed,
   DocumentHub,
@@ -13,8 +13,25 @@ import {
 } from "../components/project/ProjectWidgets";
 import { PlanWorkspace } from "../components/project/plan/PlanWorkspace";
 import type { ProjectPageProps } from "../App";
+import {
+  cancelProjectCalendarEvent,
+  approveClientProgressReport,
+  createProjectCalendarDraft,
+  createProjectCalendarEvent,
+  createProjectCommunication,
+  createClientProgressReport,
+  downloadClientReportPdf,
+  emailClientReportSnapshot,
+  sendProjectCommunication,
+  submitClientProgressReport,
+  updateClientProgressReport,
+  updateProjectCalendarEvent,
+  type ClientReportInput,
+  type ProjectCalendarEventInput,
+  type ProjectCommunicationInput
+} from "../data/api";
 import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath, type ProjectTabId } from "../routing/projectRoutes";
-import type { NotificationPreferences, Task } from "../types";
+import type { ClientProgressReport, ClientReportItem, ClientReportSnapshot, NotificationPreferences, ProjectCalendarEvent, ProjectCommunication, ProjectRecipient, Task } from "../types";
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
@@ -34,6 +51,11 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     documents: projectState.documents.filter((document) => document.projectId === projectId),
     metrics: projectState.metrics.filter((metric) => metric.projectId === projectId),
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
+    communications: projectState.projectCommunications.filter((communication) => communication.projectId === projectId),
+    calendarEvents: projectState.projectCalendarEvents.filter((event) => event.projectId === projectId),
+    reports: projectState.clientProgressReports.filter((report) => report.projectId === projectId),
+    reportSnapshots: projectState.clientReportSnapshots.filter((snapshot) => snapshot.projectId === projectId),
+    reportArtifacts: projectState.clientReportArtifacts.filter((artifact) => artifact.projectId === projectId),
     versions: projectState.projectVersions.filter((version) => version.projectId === projectId),
     dependencies: projectState.taskDependencies.filter((dependency) => (
       projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
@@ -448,25 +470,717 @@ export function RisksPage({ projectState, selectedProjectId, canManageRisks, onA
   return <RiskRegister risks={risks} canManage={canManageRisks} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} />;
 }
 
-export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal }: ProjectPageProps) {
-  const { events } = projectSlices(projectState, selectedProjectId);
+type MessageTab = "all" | "email" | "calendar" | "activity";
+
+const defaultEmailForm: ProjectCommunicationInput = {
+  subject: "",
+  bodyText: "",
+  toRecipients: [],
+  ccRecipients: [],
+  bccRecipients: [],
+  audience: "client",
+  visibility: "internal"
+};
+
+function defaultCalendarForm(): ProjectCalendarEventInput {
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+  return {
+    title: "",
+    descriptionText: "",
+    visibility: "internal",
+    startDateTime: start.toISOString().slice(0, 16),
+    endDateTime: end.toISOString().slice(0, 16),
+    timeZone: "Eastern Standard Time",
+    isAllDay: false,
+    location: "",
+    attendees: [],
+    reminderMinutesBeforeStart: 15,
+    relatedEntityType: "project",
+    relatedEntityId: null
+  };
+}
+
+function parseRecipientText(value: string): ProjectRecipient[] {
+  return value
+    .split(/[,\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((email) => ({ email }));
+}
+
+function recipientText(recipients: ProjectRecipient[]) {
+  return recipients.map((recipient) => recipient.email).join(", ");
+}
+
+function statusLabel(status: string) {
+  return status === "accepted" ? "Accepted by Microsoft 365 for delivery" : status.replaceAll("_", " ");
+}
+
+function statusTone(status: string) {
+  if (["accepted", "scheduled"].includes(status)) return "success";
+  if (["failed", "unknown", "canceled"].includes(status)) return "danger";
+  if (["sending", "creating", "updating", "canceling"].includes(status)) return "warning";
+  return "info";
+}
+
+export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+  const { project, client, events, tasks, milestones } = projectSlices(projectState, selectedProjectId);
+  const [activeTab, setActiveTab] = useState<MessageTab>("all");
+  const [communications, setCommunications] = useState<ProjectCommunication[]>(() => projectState.projectCommunications.filter((communication) => communication.projectId === selectedProjectId));
+  const [calendarEvents, setCalendarEvents] = useState<ProjectCalendarEvent[]>(() => projectState.projectCalendarEvents.filter((event) => event.projectId === selectedProjectId));
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"email" | "calendar" | null>(null);
+  const [emailForm, setEmailForm] = useState<ProjectCommunicationInput>(defaultEmailForm);
+  const [calendarForm, setCalendarForm] = useState<ProjectCalendarEventInput>(defaultCalendarForm());
+  const [editingCalendarId, setEditingCalendarId] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const canManageCommunications = canViewInternal && canManage && !clientPreview;
+
+  useEffect(() => {
+    setCommunications(projectState.projectCommunications.filter((communication) => communication.projectId === selectedProjectId));
+    setCalendarEvents(projectState.projectCalendarEvents.filter((event) => event.projectId === selectedProjectId));
+  }, [projectState.projectCommunications, projectState.projectCalendarEvents, selectedProjectId]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || working) {
+        return;
+      }
+
+      setComposeOpen(false);
+      setScheduleOpen(false);
+      setReviewMode(null);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [working]);
+
+  function openCompose() {
+    setError("");
+    setNotice("");
+    setEmailForm({
+      ...defaultEmailForm,
+      subject: project ? `${project.name} project update` : "",
+      toRecipients: client?.email ? [{ name: client.contactName, email: client.email }] : []
+    });
+    setReviewMode(null);
+    setComposeOpen(true);
+  }
+
+  function openSchedule(calendarEvent?: ProjectCalendarEvent) {
+    setError("");
+    setNotice("");
+    if (calendarEvent) {
+      setEditingCalendarId(calendarEvent.id);
+      setCalendarForm({
+        title: calendarEvent.title,
+        descriptionText: calendarEvent.descriptionText,
+        visibility: calendarEvent.visibility,
+        startDateTime: calendarEvent.startDateTime.slice(0, 16),
+        endDateTime: calendarEvent.endDateTime.slice(0, 16),
+        timeZone: calendarEvent.timeZone,
+        isAllDay: calendarEvent.isAllDay,
+        location: calendarEvent.location,
+        attendees: calendarEvent.attendees,
+        reminderMinutesBeforeStart: calendarEvent.reminderMinutesBeforeStart,
+        relatedEntityType: calendarEvent.relatedEntityType,
+        relatedEntityId: calendarEvent.relatedEntityId
+      });
+    } else {
+      setEditingCalendarId(null);
+      setCalendarForm({
+        ...defaultCalendarForm(),
+        title: project ? `${project.name} project meeting` : "",
+        attendees: client?.email ? [{ name: client.contactName, email: client.email }] : []
+      });
+    }
+    setReviewMode(null);
+    setScheduleOpen(true);
+  }
+
+  async function confirmSendEmail() {
+    setWorking(true);
+    setError("");
+    try {
+      const draft = await createProjectCommunication(selectedProjectId, emailForm);
+      const result = await sendProjectCommunication(selectedProjectId, draft.id);
+      setCommunications((current) => [result.communication, ...current.filter((item) => item.id !== result.communication.id)]);
+      setNotice("Accepted by Microsoft 365 for delivery. This does not prove final recipient delivery.");
+      setComposeOpen(false);
+      setReviewMode(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Project email could not be sent.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function confirmCalendar() {
+    setWorking(true);
+    setError("");
+    try {
+      const saved = editingCalendarId
+        ? await updateProjectCalendarEvent(selectedProjectId, editingCalendarId, calendarForm)
+        : await createProjectCalendarEvent(selectedProjectId, (await createProjectCalendarDraft(selectedProjectId, calendarForm)).id);
+      setCalendarEvents((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setNotice(saved.status === "scheduled" ? "Outlook calendar event scheduled. Attendees receive invitations when included." : "Calendar event updated.");
+      setScheduleOpen(false);
+      setReviewMode(null);
+      setEditingCalendarId(null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Calendar event could not be saved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function cancelEvent(calendarEvent: ProjectCalendarEvent) {
+    if (!window.confirm("Cancel this Outlook calendar event? The local audit record will be retained.")) {
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    try {
+      const canceled = await cancelProjectCalendarEvent(selectedProjectId, calendarEvent.id);
+      setCalendarEvents((current) => current.map((item) => item.id === canceled.id ? canceled : item));
+      setNotice("Outlook calendar event canceled and the local audit record was retained.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Calendar event could not be canceled.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const filteredCommunications = activeTab === "all" || activeTab === "email" ? communications : [];
+  const filteredCalendarEvents = activeTab === "all" || activeTab === "calendar" ? calendarEvents : [];
+  const showActivity = activeTab === "all" || activeTab === "activity";
 
   return (
-    <section className="panel">
+    <section className="panel messages-workspace">
       <div className="panel-header">
         <div>
           <h1>Messages</h1>
-          <p>Project communication history and activity updates.</p>
+          <p>Project communications, Outlook calendar links, and activity history.</p>
         </div>
-        {canViewInternal ? (
-          <button className="secondary-button" type="button" disabled title="Direct project messaging is planned for a later phase.">
-            <Mail size={18} aria-hidden="true" />
-            Send Project Update
+        {canManageCommunications ? (
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={() => openSchedule()}>
+              <CalendarDays size={18} aria-hidden="true" />
+              Schedule Event
+            </button>
+            <button className="action-button" type="button" onClick={openCompose}>
+              <Mail size={18} aria-hidden="true" />
+              Compose Email
+            </button>
+          </div>
+        ) : (
+          <p className="panel-note">You can view permitted project history, but only project managers and administrators can send email or manage Outlook events.</p>
+        )}
+      </div>
+
+      {notice ? <p className="form-success" role="status">{notice}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+
+      <div className="segmented-control" role="tablist" aria-label="Message workspace filters">
+        {(["all", "email", "calendar", "activity"] as MessageTab[]).map((tab) => (
+          <button key={tab} type="button" className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
+            {tab[0].toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {(filteredCommunications.length > 0 || filteredCalendarEvents.length > 0) ? (
+        <div className="communication-list">
+          {filteredCommunications.map((communication) => (
+            <article className="communication-row" key={communication.id}>
+              <Mail size={18} aria-hidden="true" />
+              <div>
+                <strong>{communication.subject}</strong>
+                <span>{communication.toRecipients.length} To · {communication.visibility.replace("_", " ")} · {communication.createdBy}</span>
+                {communication.status === "unknown" ? <em>Prior send status is unknown. Manual retry may duplicate delivery.</em> : null}
+              </div>
+              <StatusBadge label={statusLabel(communication.status)} tone={statusTone(communication.status)} />
+            </article>
+          ))}
+          {filteredCalendarEvents.map((calendarEvent) => (
+            <article className="communication-row" key={calendarEvent.id}>
+              <CalendarDays size={18} aria-hidden="true" />
+              <div>
+                <strong>{calendarEvent.title}</strong>
+                <span>{formatDate(calendarEvent.startDateTime)} · {calendarEvent.attendees.length} attendees · {calendarEvent.visibility.replace("_", " ")}</span>
+              </div>
+              <div className="button-row">
+                <StatusBadge label={statusLabel(calendarEvent.status)} tone={statusTone(calendarEvent.status)} />
+                {calendarEvent.graphWebLink ? (
+                  <button className="icon-button" type="button" onClick={() => window.open(calendarEvent.graphWebLink || "", "_blank", "noopener,noreferrer")} aria-label={`Open ${calendarEvent.title} in Outlook`}>
+                    <ExternalLink size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
+                {canManageCommunications && calendarEvent.status !== "canceled" ? (
+                  <>
+                    <button className="secondary-button compact-button" type="button" onClick={() => openSchedule(calendarEvent)}>Edit</button>
+                    <button className="secondary-button compact-button" type="button" onClick={() => cancelEvent(calendarEvent)} disabled={working}>Cancel</button>
+                  </>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : activeTab !== "activity" ? (
+        <div className="empty-state">
+          <h2>No project communications yet.</h2>
+          <p>Emails and Outlook events created through AccelProjects will appear here.</p>
+        </div>
+      ) : null}
+
+      {showActivity ? <ActivityFeed events={events} users={projectState.users} clientPreview={clientPreview} /> : null}
+
+      {composeOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setComposeOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="compose-email-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="compose-email-heading">{reviewMode === "email" ? "Review Email" : "Compose Email"}</h2>
+              <button className="icon-button" type="button" aria-label="Close compose email" onClick={() => setComposeOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            {reviewMode === "email" ? (
+              <div className="review-stack">
+                <p><strong>To:</strong> {recipientText(emailForm.toRecipients)}</p>
+                <p><strong>CC:</strong> {recipientText(emailForm.ccRecipients) || "None"}</p>
+                <p><strong>BCC:</strong> {emailForm.bccRecipients.length} hidden recipients</p>
+                <p><strong>Subject:</strong> {emailForm.subject}</p>
+                <pre>{emailForm.bodyText}</pre>
+                <p className="panel-note">Microsoft Graph returns Accepted when Microsoft 365 accepts the request. This is not final delivery confirmation.</p>
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setReviewMode(null)} disabled={working}>Back</button>
+                  <button className="action-button" type="button" onClick={confirmSendEmail} disabled={working}>{working ? "Sending..." : "Confirm Send"}</button>
+                </div>
+              </div>
+            ) : (
+              <form className="settings-form" onSubmit={(event) => { event.preventDefault(); setReviewMode("email"); }}>
+                <label>To<input value={recipientText(emailForm.toRecipients)} onChange={(event) => setEmailForm({ ...emailForm, toRecipients: parseRecipientText(event.target.value) })} required /></label>
+                <label>CC<input value={recipientText(emailForm.ccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, ccRecipients: parseRecipientText(event.target.value) })} /></label>
+                <label>BCC<input value={recipientText(emailForm.bccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, bccRecipients: parseRecipientText(event.target.value) })} /></label>
+                <label>Subject<input value={emailForm.subject} onChange={(event) => setEmailForm({ ...emailForm, subject: event.target.value })} required /></label>
+                <label>Message<textarea value={emailForm.bodyText} onChange={(event) => setEmailForm({ ...emailForm, bodyText: event.target.value })} required rows={8} /></label>
+                <div className="form-grid two">
+                  <label>Audience<select value={emailForm.audience} onChange={(event) => setEmailForm({ ...emailForm, audience: event.target.value as ProjectCommunicationInput["audience"] })}><option value="client">Client</option><option value="internal">Internal</option><option value="mixed">Mixed</option></select></label>
+                  <label>Visibility<select value={emailForm.visibility} onChange={(event) => setEmailForm({ ...emailForm, visibility: event.target.value as ProjectCommunicationInput["visibility"] })}><option value="internal">Internal</option><option value="client_visible">Client visible later</option></select></label>
+                </div>
+                <button className="action-button" type="submit">Review Email</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
+
+      {scheduleOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setScheduleOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-event-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="schedule-event-heading">{reviewMode === "calendar" ? "Review Event" : editingCalendarId ? "Edit Event" : "Schedule Event"}</h2>
+              <button className="icon-button" type="button" aria-label="Close schedule event" onClick={() => setScheduleOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            {reviewMode === "calendar" ? (
+              <div className="review-stack">
+                <p><strong>Title:</strong> {calendarForm.title}</p>
+                <p><strong>When:</strong> {calendarForm.startDateTime} to {calendarForm.endDateTime} ({calendarForm.timeZone})</p>
+                <p><strong>Attendees:</strong> {recipientText(calendarForm.attendees) || "None"}</p>
+                {calendarForm.attendees.length > 0 ? <p className="form-warning">Outlook will send invitations to attendees after confirmation.</p> : null}
+                <div className="button-row">
+                  <button className="secondary-button" type="button" onClick={() => setReviewMode(null)} disabled={working}>Back</button>
+                  <button className="action-button" type="button" onClick={confirmCalendar} disabled={working}>{working ? "Saving..." : editingCalendarId ? "Confirm Update" : "Confirm Schedule"}</button>
+                </div>
+              </div>
+            ) : (
+              <form className="settings-form" onSubmit={(event) => { event.preventDefault(); setReviewMode("calendar"); }}>
+                <label>Title<input value={calendarForm.title} onChange={(event) => setCalendarForm({ ...calendarForm, title: event.target.value })} required /></label>
+                <label>Description<textarea value={calendarForm.descriptionText} onChange={(event) => setCalendarForm({ ...calendarForm, descriptionText: event.target.value })} rows={4} /></label>
+                <div className="form-grid two">
+                  <label>Start<input type="datetime-local" value={calendarForm.startDateTime} onChange={(event) => setCalendarForm({ ...calendarForm, startDateTime: event.target.value })} required /></label>
+                  <label>End<input type="datetime-local" value={calendarForm.endDateTime} onChange={(event) => setCalendarForm({ ...calendarForm, endDateTime: event.target.value })} required /></label>
+                </div>
+                <div className="form-grid two">
+                  <label>Time zone<input value={calendarForm.timeZone} onChange={(event) => setCalendarForm({ ...calendarForm, timeZone: event.target.value })} /></label>
+                  <label>Reminder minutes<input type="number" min={0} value={calendarForm.reminderMinutesBeforeStart} onChange={(event) => setCalendarForm({ ...calendarForm, reminderMinutesBeforeStart: Number(event.target.value) })} /></label>
+                </div>
+                <label>Location<input value={calendarForm.location} onChange={(event) => setCalendarForm({ ...calendarForm, location: event.target.value })} /></label>
+                <label>Attendees<input value={recipientText(calendarForm.attendees)} onChange={(event) => setCalendarForm({ ...calendarForm, attendees: parseRecipientText(event.target.value) })} /></label>
+                <div className="form-grid two">
+                  <label>Related item<select value={`${calendarForm.relatedEntityType}:${calendarForm.relatedEntityId || ""}`} onChange={(event) => {
+                    const [type, id] = event.target.value.split(":");
+                    setCalendarForm({ ...calendarForm, relatedEntityType: type as ProjectCalendarEventInput["relatedEntityType"], relatedEntityId: id || null });
+                  }}>
+                    <option value="project:">Project</option>
+                    {tasks.map((task) => <option key={task.id} value={`task:${task.id}`}>Task: {task.title}</option>)}
+                    {milestones.map((milestone) => <option key={milestone.id} value={`milestone:${milestone.id}`}>Milestone: {milestone.name}</option>)}
+                  </select></label>
+                  <label>Visibility<select value={calendarForm.visibility} onChange={(event) => setCalendarForm({ ...calendarForm, visibility: event.target.value as ProjectCalendarEventInput["visibility"] })}><option value="internal">Internal</option><option value="client_visible">Client visible later</option></select></label>
+                </div>
+                <label className="checkbox-label"><input type="checkbox" checked={calendarForm.isAllDay} onChange={(event) => setCalendarForm({ ...calendarForm, isAllDay: event.target.checked })} /> All-day event</label>
+                <button className="action-button" type="submit">Review Event</button>
+              </form>
+            )}
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function reportItemFromTask(task: Task, ownerName: string): ClientReportItem {
+  return {
+    id: task.id,
+    title: task.title,
+    status: taskStatusLabels[task.status] ?? task.status,
+    dueDate: task.dueDate ?? task.startDate ?? "",
+    owner: ownerName
+  };
+}
+
+function textLinesToList(value: string) {
+  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function listToText(value: string[]) {
+  return value.join("\n");
+}
+
+function buildDefaultReportInput(projectState: ProjectPageProps["projectState"], projectId: string): ClientReportInput {
+  const { project, tasks, risks, milestones } = projectSlices(projectState, projectId);
+  const today = todayDateOnly();
+  const priorWeek = new Date(`${today}T00:00:00.000Z`);
+  priorWeek.setUTCDate(priorWeek.getUTCDate() - 7);
+  const userName = (userId: string | null) => projectState.users.find((user) => user.id === userId)?.name ?? "";
+  const completedTasks = tasks
+    .filter((task) => task.status === "done")
+    .slice(0, 12)
+    .map((task) => reportItemFromTask(task, userName(task.assigneeId)));
+  const upcomingTasks = tasks
+    .filter((task) => task.status !== "done")
+    .sort((left, right) => compareDateOnly(left.dueDate, right.dueDate))
+    .slice(0, 12)
+    .map((task) => reportItemFromTask(task, userName(task.assigneeId)));
+
+  return {
+    title: `${project?.name ?? "Project"} Progress Report`,
+    reportingPeriodStart: priorWeek.toISOString().slice(0, 10),
+    reportingPeriodEnd: today,
+    executiveSummary: project?.summary ?? "",
+    progressSummary: "",
+    nextSteps: "",
+    clientActions: [],
+    highlights: [],
+    risks: risks.filter((risk) => risk.status !== "resolved").slice(0, 8).map((risk) => ({
+      id: risk.id,
+      title: risk.title,
+      status: risk.severity,
+      dueDate: "",
+      owner: ""
+    })),
+    milestones: milestones.slice(0, 8).map((milestone) => ({
+      id: milestone.id,
+      title: milestone.name,
+      status: milestone.status,
+      dueDate: milestone.date,
+      owner: ""
+    })),
+    completedTasks,
+    upcomingTasks,
+    includeBudget: false
+  };
+}
+
+function reportStatusLabel(status: ClientProgressReport["status"]) {
+  return status === "ready_for_review" ? "Ready for review" : status[0].toUpperCase() + status.slice(1);
+}
+
+export function ReportsPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+  const { project, client, reports, reportSnapshots } = projectSlices(projectState, selectedProjectId);
+  const [localReports, setLocalReports] = useState<ClientProgressReport[]>(reports);
+  const [localSnapshots, setLocalSnapshots] = useState<ClientReportSnapshot[]>(reportSnapshots);
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [form, setForm] = useState<ClientReportInput>(() => buildDefaultReportInput(projectState, selectedProjectId));
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [emailSnapshotId, setEmailSnapshotId] = useState<string | null>(null);
+  const [emailForm, setEmailForm] = useState<ProjectCommunicationInput>(defaultEmailForm);
+  const [working, setWorking] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const canManageReports = canViewInternal && canManage && !clientPreview;
+
+  useEffect(() => {
+    setLocalReports(reports);
+    setLocalSnapshots(reportSnapshots);
+  }, [reports, reportSnapshots]);
+
+  if (!project) {
+    return <ProjectUnavailable />;
+  }
+  const currentProject = project;
+
+  function openDraft(report?: ClientProgressReport) {
+    setError("");
+    setNotice("");
+    setEditingReportId(report?.id ?? null);
+    setForm(report ? {
+      title: report.title,
+      reportingPeriodStart: report.reportingPeriodStart,
+      reportingPeriodEnd: report.reportingPeriodEnd,
+      executiveSummary: report.executiveSummary,
+      progressSummary: report.progressSummary,
+      nextSteps: report.nextSteps,
+      clientActions: report.clientActions,
+      highlights: report.highlights,
+      risks: report.risks,
+      milestones: report.milestones,
+      completedTasks: report.completedTasks,
+      upcomingTasks: report.upcomingTasks,
+      includeBudget: report.includeBudget
+    } : buildDefaultReportInput(projectState, selectedProjectId));
+    setDraftOpen(true);
+  }
+
+  async function saveDraft(event: FormEvent) {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+    try {
+      const saved = editingReportId
+        ? await updateClientProgressReport(selectedProjectId, editingReportId, form)
+        : await createClientProgressReport(selectedProjectId, form);
+      setLocalReports((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setDraftOpen(false);
+      setNotice("Report draft saved.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report draft could not be saved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function submitReport(report: ClientProgressReport) {
+    setWorking(true);
+    setError("");
+    try {
+      const submitted = await submitClientProgressReport(selectedProjectId, report.id);
+      setLocalReports((current) => current.map((item) => item.id === submitted.id ? submitted : item));
+      setNotice("Report submitted for approval.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report could not be submitted.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function approve(report: ClientProgressReport) {
+    setWorking(true);
+    setError("");
+    try {
+      const result = await approveClientProgressReport(selectedProjectId, report.id);
+      setLocalReports((current) => current.map((item) => item.id === result.report.id ? result.report : item));
+      setLocalSnapshots((current) => [result.snapshot, ...current.filter((item) => item.id !== result.snapshot.id)]);
+      setNotice("Report approved and immutable snapshot created.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report could not be approved.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function downloadPdf(report: ClientProgressReport, snapshotId: string) {
+    setWorking(true);
+    setError("");
+    try {
+      const result = await downloadClientReportPdf(selectedProjectId, report.id, snapshotId);
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(`PDF generated. Artifact ${result.artifactId ?? "recorded"}${result.sha256 ? ` · ${result.sha256.slice(0, 12)}` : ""}.`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report PDF could not be generated.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function openEmail(report: ClientProgressReport, snapshotId: string) {
+    setEmailSnapshotId(snapshotId);
+    setEmailForm({
+      ...defaultEmailForm,
+      subject: `${currentProject.name} progress report`,
+      bodyText: "Attached is the approved project progress report.",
+      toRecipients: client?.email ? [{ name: client.contactName, email: client.email }] : []
+    });
+  }
+
+  async function sendReportEmail(event: FormEvent) {
+    event.preventDefault();
+    const report = localReports.find((item) => item.latestApprovedSnapshotId === emailSnapshotId);
+    if (!report || !emailSnapshotId) {
+      setError("Approved report snapshot was not found.");
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    try {
+      await emailClientReportSnapshot(selectedProjectId, report.id, emailSnapshotId, emailForm);
+      setEmailSnapshotId(null);
+      setNotice("Report email with PDF attachment accepted by Microsoft 365 for delivery.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report email could not be sent.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const sortedReports = [...localReports].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+  return (
+    <section className="panel reports-workspace">
+      <div className="panel-header">
+        <div>
+          <h1>Reports</h1>
+          <p>Client progress reports, approval snapshots, PDFs, and delivery audit.</p>
+        </div>
+        {canManageReports ? (
+          <button className="action-button" type="button" onClick={() => openDraft()}>
+            <FileText size={18} aria-hidden="true" />
+            New Report
           </button>
         ) : null}
       </div>
-      <ActivityFeed events={events} users={projectState.users} clientPreview={clientPreview} />
+      {notice ? <p className="form-success" role="status">{notice}</p> : null}
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {sortedReports.length === 0 ? (
+        <div className="empty-state">
+          <h2>No client reports yet.</h2>
+          <p>Create a report draft to produce approved PDF snapshots for client delivery.</p>
+        </div>
+      ) : (
+        <div className="communication-list">
+          {sortedReports.map((report) => {
+            const snapshotId = report.latestApprovedSnapshotId;
+            const snapshot = snapshotId ? localSnapshots.find((item) => item.id === snapshotId) : null;
+
+            return (
+              <article className="communication-row report-row" key={report.id}>
+                <FileText size={18} aria-hidden="true" />
+                <div>
+                  <strong>{report.title}</strong>
+                  <span>{formatDate(report.reportingPeriodStart)} to {formatDate(report.reportingPeriodEnd)} · updated {formatDate(report.updatedAt)}</span>
+                  {snapshot ? <em>Approved snapshot hash {snapshot.contentHash.slice(0, 16)}</em> : null}
+                </div>
+                <div className="button-row">
+                  <StatusBadge label={reportStatusLabel(report.status)} tone={report.status === "approved" ? "success" : report.status === "ready_for_review" ? "warning" : "info"} />
+                  {canManageReports && report.status !== "approved" ? <button className="secondary-button compact-button" type="button" onClick={() => openDraft(report)} disabled={working}>Edit</button> : null}
+                  {canManageReports && report.status === "draft" ? <button className="secondary-button compact-button" type="button" onClick={() => void submitReport(report)} disabled={working}>Submit</button> : null}
+                  {canManageReports && report.status === "ready_for_review" ? <button className="secondary-button compact-button" type="button" onClick={() => void approve(report)} disabled={working}>Approve</button> : null}
+                  {snapshotId ? (
+                    <>
+                      <button className="secondary-button compact-button" type="button" onClick={() => void downloadPdf(report, snapshotId)} disabled={working}>PDF</button>
+                      <button className="secondary-button compact-button" type="button" onClick={() => onNavigate(`/projects/${selectedProjectId}/reports/${report.id}/print/${snapshotId}`)}>Print</button>
+                      {canManageReports ? <button className="secondary-button compact-button" type="button" onClick={() => openEmail(report, snapshotId)} disabled={working}>Email</button> : null}
+                    </>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {draftOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setDraftOpen(false)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="report-draft-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="report-draft-heading">{editingReportId ? "Edit Report Draft" : "New Report Draft"}</h2>
+              <button className="icon-button" type="button" aria-label="Close report draft" onClick={() => setDraftOpen(false)} disabled={working}><X size={18} /></button>
+            </div>
+            <form className="settings-form" onSubmit={saveDraft}>
+              <label>Title<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /></label>
+              <div className="form-grid two">
+                <label>Period start<input type="date" value={form.reportingPeriodStart} onChange={(event) => setForm({ ...form, reportingPeriodStart: event.target.value })} required /></label>
+                <label>Period end<input type="date" value={form.reportingPeriodEnd} onChange={(event) => setForm({ ...form, reportingPeriodEnd: event.target.value })} required /></label>
+              </div>
+              <label>Executive summary<textarea rows={4} value={form.executiveSummary} onChange={(event) => setForm({ ...form, executiveSummary: event.target.value })} /></label>
+              <label>Progress summary<textarea rows={4} value={form.progressSummary} onChange={(event) => setForm({ ...form, progressSummary: event.target.value })} /></label>
+              <label>Highlights<textarea rows={3} value={listToText(form.highlights)} onChange={(event) => setForm({ ...form, highlights: textLinesToList(event.target.value) })} /></label>
+              <label>Client actions<textarea rows={3} value={listToText(form.clientActions)} onChange={(event) => setForm({ ...form, clientActions: textLinesToList(event.target.value) })} /></label>
+              <label>Next steps<textarea rows={4} value={form.nextSteps} onChange={(event) => setForm({ ...form, nextSteps: event.target.value })} /></label>
+              <p className="panel-note">Tasks, milestones, and risks are prefilled from the current project. Edit this report draft before approval if the client-facing set should differ.</p>
+              <button className="action-button" type="submit" disabled={working}>{working ? "Saving..." : "Save Draft"}</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {emailSnapshotId ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setEmailSnapshotId(null)}>
+          <section className="modal-panel communication-modal" role="dialog" aria-modal="true" aria-labelledby="report-email-heading" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2 id="report-email-heading">Email Approved Report</h2>
+              <button className="icon-button" type="button" aria-label="Close report email" onClick={() => setEmailSnapshotId(null)} disabled={working}><X size={18} /></button>
+            </div>
+            <form className="settings-form" onSubmit={sendReportEmail}>
+              <label>To<input value={recipientText(emailForm.toRecipients)} onChange={(event) => setEmailForm({ ...emailForm, toRecipients: parseRecipientText(event.target.value) })} required /></label>
+              <label>CC<input value={recipientText(emailForm.ccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, ccRecipients: parseRecipientText(event.target.value) })} /></label>
+              <label>BCC<input value={recipientText(emailForm.bccRecipients)} onChange={(event) => setEmailForm({ ...emailForm, bccRecipients: parseRecipientText(event.target.value) })} /></label>
+              <label>Subject<input value={emailForm.subject} onChange={(event) => setEmailForm({ ...emailForm, subject: event.target.value })} required /></label>
+              <label>Message<textarea rows={5} value={emailForm.bodyText} onChange={(event) => setEmailForm({ ...emailForm, bodyText: event.target.value })} required /></label>
+              <p className="panel-note">The server generates and attaches the approved PDF snapshot. Microsoft 365 Accepted means the request was accepted for delivery, not final recipient delivery.</p>
+              <button className="action-button" type="submit" disabled={working}>{working ? "Sending..." : "Send PDF Attachment"}</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </section>
+  );
+}
+
+export function ReportPrintPage({ projectState, selectedProjectId, reportId, snapshotId }: ProjectPageProps & { reportId: string; snapshotId: string }) {
+  const snapshot = projectState.clientReportSnapshots.find((item) => item.projectId === selectedProjectId && item.reportId === reportId && item.id === snapshotId);
+
+  if (!snapshot) {
+    return <ProjectUnavailable />;
+  }
+
+  return (
+    <main className="report-print-page">
+      <header>
+        <p>{String(snapshot.client.name ?? "Client")} · {snapshot.reportingPeriodStart} to {snapshot.reportingPeriodEnd}</p>
+        <h1>{snapshot.title}</h1>
+        <span>Approved {formatDate(snapshot.approvedAt)} · {snapshot.contentHash.slice(0, 16)}</span>
+      </header>
+      <section>
+        <h2>Executive Summary</h2>
+        <p>{snapshot.sections.executiveSummary || "No update provided."}</p>
+        <h2>Progress Summary</h2>
+        <p>{snapshot.sections.progressSummary || "No update provided."}</p>
+        <h2>Highlights</h2>
+        <ul>{snapshot.sections.highlights.map((item) => <li key={item}>{item}</li>)}</ul>
+        <h2>Completed Work</h2>
+        <ul>{snapshot.sections.completedTasks.map((item) => <li key={item.id}>{item.title} {item.status ? `· ${item.status}` : ""}</li>)}</ul>
+        <h2>Upcoming Work</h2>
+        <ul>{snapshot.sections.upcomingTasks.map((item) => <li key={item.id}>{item.title} {item.dueDate ? `· ${formatDate(item.dueDate)}` : ""}</li>)}</ul>
+        <h2>Risks and Watch Items</h2>
+        <ul>{snapshot.sections.risks.map((item) => <li key={item.id}>{item.title} {item.status ? `· ${item.status}` : ""}</li>)}</ul>
+        <h2>Client Actions</h2>
+        <ul>{snapshot.sections.clientActions.map((item) => <li key={item}>{item}</li>)}</ul>
+        <h2>Next Steps</h2>
+        <p>{snapshot.sections.nextSteps || "No update provided."}</p>
+      </section>
+    </main>
   );
 }
 

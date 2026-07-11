@@ -262,6 +262,181 @@ export type ProjectActivityEvent = {
   createdAt: string;
 };
 
+export type ProjectRecipient = {
+  name?: string;
+  email: string;
+};
+
+export type ProjectCommunicationStatus = "draft" | "sending" | "accepted" | "failed" | "unknown" | "canceled";
+
+export type ProjectCommunication = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  channel: "email";
+  direction: "outbound";
+  audience: "client" | "internal" | "mixed";
+  visibility: "internal" | "client_visible";
+  status: ProjectCommunicationStatus;
+  subject: string;
+  bodyText: string;
+  toRecipients: ProjectRecipient[];
+  ccRecipients: ProjectRecipient[];
+  bccRecipients: ProjectRecipient[];
+  senderMailbox: string;
+  provider: "microsoft_graph";
+  sourceType: "manual_project_update" | "report_snapshot";
+  sourceId: string | null;
+  attachmentRefs: Array<Record<string, unknown>>;
+  idempotencyKey: string;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  sendRequestedAt: string | null;
+  acceptedAt: string | null;
+  failedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+};
+
+export type ProjectDeliveryAttempt = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  communicationId: string;
+  attemptNumber: number;
+  actorId: string;
+  startedAt: string;
+  finishedAt: string;
+  status: ProjectCommunicationStatus;
+  provider: "microsoft_graph";
+  providerHttpStatus: number | null;
+  errorCategory: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestHash: string;
+  createdAt: string;
+};
+
+export type ProjectCalendarEventStatus = "draft" | "creating" | "scheduled" | "updating" | "canceling" | "canceled" | "failed";
+
+export type ProjectCalendarEvent = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  title: string;
+  descriptionText: string;
+  visibility: "internal" | "client_visible";
+  status: ProjectCalendarEventStatus;
+  calendarOwnerEmail: string;
+  startDateTime: string;
+  endDateTime: string;
+  timeZone: string;
+  isAllDay: boolean;
+  location: string;
+  attendees: ProjectRecipient[];
+  reminderMinutesBeforeStart: number;
+  relatedEntityType: "project" | "task" | "milestone" | "report" | "other";
+  relatedEntityId: string | null;
+  transactionId: string;
+  graphEventId: string | null;
+  graphICalUId: string | null;
+  graphWebLink: string | null;
+  graphChangeKey: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  lastSyncedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+};
+
+export type ClientReportStatus = "draft" | "ready_for_review" | "approved";
+
+export type ClientReportItem = {
+  id: string;
+  title: string;
+  status: string;
+  dueDate: string;
+  owner: string;
+};
+
+export type ClientProgressReport = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  title: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  executiveSummary: string;
+  progressSummary: string;
+  nextSteps: string;
+  clientActions: string[];
+  highlights: string[];
+  risks: ClientReportItem[];
+  milestones: ClientReportItem[];
+  completedTasks: ClientReportItem[];
+  upcomingTasks: ClientReportItem[];
+  includeBudget: boolean;
+  includeInternalNotes: boolean;
+  status: ClientReportStatus;
+  latestApprovedSnapshotId: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  submittedAt: string | null;
+  submittedBy: string | null;
+  approvedAt: string | null;
+  approvedBy: string | null;
+};
+
+export type ClientReportSnapshot = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  reportId: string;
+  title: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  project: Record<string, unknown>;
+  client: Record<string, unknown>;
+  sections: {
+    executiveSummary: string;
+    progressSummary: string;
+    nextSteps: string;
+    clientActions: string[];
+    highlights: string[];
+    risks: ClientReportItem[];
+    milestones: ClientReportItem[];
+    completedTasks: ClientReportItem[];
+    upcomingTasks: ClientReportItem[];
+  };
+  contentHash: string;
+  projectRevisionAtApproval: number;
+  sourceReportUpdatedAt: string;
+  approvedBy: string;
+  approvedAt: string;
+  createdAt: string;
+};
+
+export type ClientReportArtifact = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  reportId: string;
+  snapshotId: string;
+  purpose: "download" | "email_attachment" | "print";
+  filename: string;
+  contentType: "application/pdf";
+  sizeBytes: number;
+  sha256: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type ProjectVersion = {
   id: string;
   projectId: string;
@@ -340,5 +515,10 @@ export type ProjectState = {
   documents: ProjectDocument[];
   metrics: ProjectMetric[];
   activityEvents: ProjectActivityEvent[];
+  projectCommunications: ProjectCommunication[];
+  projectCalendarEvents: ProjectCalendarEvent[];
+  clientProgressReports: ClientProgressReport[];
+  clientReportSnapshots: ClientReportSnapshot[];
+  clientReportArtifacts: ClientReportArtifact[];
   projectVersions: ProjectVersion[];
 };

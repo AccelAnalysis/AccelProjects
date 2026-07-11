@@ -172,6 +172,11 @@ function makeState(overrides: Partial<ProjectState> = {}): ProjectState {
     activityEvents: [
       event({ id: "activity_task", type: "task_updated", createdAt: "2026-07-10T12:00:00.000Z" })
     ],
+    projectCommunications: [],
+    projectCalendarEvents: [],
+    clientProgressReports: [],
+    clientReportSnapshots: [],
+    clientReportArtifacts: [],
     projectVersions: [],
     ...overrides
   };

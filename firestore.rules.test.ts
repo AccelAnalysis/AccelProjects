@@ -85,6 +85,99 @@ function manifestRef(uid: string, id = "a".repeat(64)) {
   return doc(dbFor(uid), ...orgPath("projects", projectId, "updateManifests", id));
 }
 
+function communicationRef(uid: string, id = "comm_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "communications", id));
+}
+
+function deliveryAttemptRef(uid: string, communicationId = "comm_1", id = "attempt_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "communications", communicationId, "deliveryAttempts", id));
+}
+
+function calendarEventRef(uid: string, id = "cal_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "calendarEvents", id));
+}
+
+function reportRef(uid: string, id = "report_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", id));
+}
+
+function reportSnapshotRef(uid: string, reportId = "report_1", id = "snapshot_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", reportId, "snapshots", id));
+}
+
+function reportArtifactRef(uid: string, reportId = "report_1", id = "artifact_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", reportId, "artifacts", id));
+}
+
+function communicationDraft(id: string, actorId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    organizationId: orgId,
+    projectId,
+    channel: "email",
+    direction: "outbound",
+    audience: "client",
+    visibility: "internal",
+    status: "draft",
+    subject: "Project update",
+    bodyText: "Status update",
+    toRecipients: [{ email: "client@example.com" }],
+    ccRecipients: [],
+    bccRecipients: [],
+    senderMailbox: "sender@example.com",
+    provider: "microsoft_graph",
+    sourceType: "manual_project_update",
+    sourceId: null,
+    attachmentRefs: [],
+    idempotencyKey: "idem_1",
+    createdBy: actorId,
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedBy: actorId,
+    updatedAt: "2026-07-10T00:00:00.000Z",
+    sendRequestedAt: null,
+    acceptedAt: null,
+    failedAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    ...overrides
+  };
+}
+
+function calendarDraft(id: string, actorId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    organizationId: orgId,
+    projectId,
+    title: "Project review",
+    descriptionText: "Review progress",
+    visibility: "internal",
+    status: "draft",
+    calendarOwnerEmail: "calendar@example.com",
+    startDateTime: "2026-07-12T15:00:00",
+    endDateTime: "2026-07-12T16:00:00",
+    timeZone: "Eastern Standard Time",
+    isAllDay: false,
+    location: "",
+    attendees: [{ email: "client@example.com" }],
+    reminderMinutesBeforeStart: 15,
+    relatedEntityType: "project",
+    relatedEntityId: null,
+    transactionId: "txn_1",
+    graphEventId: null,
+    graphICalUId: null,
+    graphWebLink: null,
+    graphChangeKey: null,
+    createdBy: actorId,
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedBy: actorId,
+    updatedAt: "2026-07-10T00:00:00.000Z",
+    lastSyncedAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    ...overrides
+  };
+}
+
 async function assertCanCreateFileRevision(uid: string) {
   await assertSucceeds(updateDoc(projectRef(uid), { revision: 2, updatedAt: "2026-07-10T01:00:00.000Z", lastStructuralChangeAt: "2026-07-10T01:00:00.000Z" }));
   await assertSucceeds(setDoc(versionRef(uid, `version_${uid}`), { id: `version_${uid}`, projectId, revision: 2, previousRevision: 1, changeType: "project_file_updated", actorId: uid, summary: "Updated", metadata: {}, createdAt: "2026-07-10T01:00:00.000Z" }));
@@ -205,5 +298,91 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(updateDoc(snapshotRef("owner_pm"), { packageJson: "rewritten" }));
     await assertSucceeds(setDoc(manifestRef("owner_pm"), { id: "a".repeat(64), projectId, actorId: "owner_pm", uploadedFileHash: "a".repeat(64) }));
     await assertFails(updateDoc(manifestRef("owner_pm"), { resultRevision: 3 }));
+  });
+
+  it("protects project communications by role and status field ownership", async () => {
+    await assertSucceeds(setDoc(communicationRef("owner_pm"), communicationDraft("comm_1", "owner_pm")));
+    await assertSucceeds(getDoc(communicationRef("contributor")));
+    await assertSucceeds(getDoc(communicationRef("viewer")));
+    await assertFails(getDoc(communicationRef("client")));
+    await assertFails(setDoc(communicationRef("contributor", "comm_contributor"), communicationDraft("comm_contributor", "contributor")));
+    await assertFails(setDoc(communicationRef("viewer", "comm_viewer"), communicationDraft("comm_viewer", "viewer")));
+    await assertFails(setDoc(communicationRef("client", "comm_client"), communicationDraft("comm_client", "client")));
+    await assertFails(updateDoc(communicationRef("owner_pm"), { status: "accepted", acceptedAt: "2026-07-10T02:00:00.000Z" }));
+    await assertFails(updateDoc(communicationRef("owner_pm"), { senderMailbox: "other@example.com", updatedAt: "2026-07-10T02:00:00.000Z" }));
+    await assertSucceeds(updateDoc(communicationRef("owner_pm"), { subject: "Updated subject", updatedBy: "owner_pm", updatedAt: "2026-07-10T02:00:00.000Z" }));
+  });
+
+  it("keeps delivery attempts server-written and immutable", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, ...orgPath("projects", projectId, "communications", "comm_accepted")), communicationDraft("comm_accepted", "owner_pm", { status: "accepted" }));
+      await setDoc(doc(db, ...orgPath("projects", projectId, "communications", "comm_accepted", "deliveryAttempts", "attempt_1")), {
+        id: "attempt_1",
+        projectId,
+        communicationId: "comm_accepted",
+        status: "accepted"
+      });
+    });
+
+    await assertSucceeds(getDoc(deliveryAttemptRef("owner_pm", "comm_accepted")));
+    await assertFails(setDoc(deliveryAttemptRef("owner_pm", "comm_accepted", "attempt_2"), { id: "attempt_2", status: "accepted" }));
+    await assertFails(updateDoc(deliveryAttemptRef("owner_pm", "comm_accepted"), { status: "failed" }));
+  });
+
+  it("protects calendar events and Graph sync fields", async () => {
+    await assertSucceeds(setDoc(calendarEventRef("lead_pm"), calendarDraft("cal_1", "lead_pm")));
+    await assertSucceeds(getDoc(calendarEventRef("contributor")));
+    await assertFails(getDoc(calendarEventRef("client")));
+    await assertFails(setDoc(calendarEventRef("contributor", "cal_contributor"), calendarDraft("cal_contributor", "contributor")));
+    await assertFails(updateDoc(calendarEventRef("lead_pm"), { graphEventId: "graph_1", status: "scheduled", lastSyncedAt: "2026-07-10T02:00:00.000Z" }));
+    await assertFails(updateDoc(calendarEventRef("lead_pm"), { projectId: otherProjectId, updatedAt: "2026-07-10T02:00:00.000Z" }));
+    await assertSucceeds(updateDoc(calendarEventRef("lead_pm"), { title: "Updated review", updatedBy: "lead_pm", updatedAt: "2026-07-10T02:00:00.000Z" }));
+  });
+
+  it("lets project readers view report snapshots but keeps browser report writes server-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1")), {
+        id: "report_1",
+        organizationId: orgId,
+        projectId,
+        title: "Client report",
+        status: "approved",
+        latestApprovedSnapshotId: "snapshot_1",
+        createdBy: "owner_pm",
+        createdAt: "2026-07-10T00:00:00.000Z",
+        updatedBy: "owner_pm",
+        updatedAt: "2026-07-10T00:00:00.000Z"
+      });
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1", "snapshots", "snapshot_1")), {
+        id: "snapshot_1",
+        projectId,
+        reportId: "report_1",
+        contentHash: "abc",
+        approvedAt: "2026-07-10T00:00:00.000Z"
+      });
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reports", "report_1", "artifacts", "artifact_1")), {
+        id: "artifact_1",
+        projectId,
+        reportId: "report_1",
+        snapshotId: "snapshot_1",
+        sha256: "def"
+      });
+    });
+
+    await assertSucceeds(getDoc(reportRef("owner_pm")));
+    await assertSucceeds(getDoc(reportSnapshotRef("lead_pm")));
+    await assertSucceeds(getDoc(reportArtifactRef("contributor")));
+    await assertFails(getDoc(reportRef("client")));
+    await assertFails(setDoc(reportRef("owner_pm", "report_2"), { id: "report_2", projectId, title: "Forged draft" }));
+    await assertFails(updateDoc(reportRef("owner_pm"), { title: "Mutated approved report" }));
+    await assertFails(setDoc(reportSnapshotRef("owner_pm", "report_1", "snapshot_2"), { id: "snapshot_2", projectId, reportId: "report_1", contentHash: "forged" }));
+    await assertFails(updateDoc(reportSnapshotRef("owner_pm"), { contentHash: "changed" }));
+    await assertFails(setDoc(reportArtifactRef("owner_pm", "report_1", "artifact_2"), { id: "artifact_2", projectId, reportId: "report_1", snapshotId: "snapshot_1" }));
+  });
+
+  it("keeps unknown project communication paths denied by default", async () => {
+    await assertFails(setDoc(doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "communications", "comm_1", "unexpected", "x")), { id: "x" }));
   });
 });

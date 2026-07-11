@@ -185,5 +185,10 @@ const projectState: ProjectState = {
   documents: [],
   metrics: [],
   activityEvents: [],
+  projectCommunications: [],
+  projectCalendarEvents: [],
+  clientProgressReports: [],
+  clientReportSnapshots: [],
+  clientReportArtifacts: [],
   projectVersions: []
 };

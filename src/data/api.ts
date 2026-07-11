@@ -4,11 +4,17 @@ import type {
   EmailPreview,
   EventLog,
   EventLogInput,
+  ClientProgressReport,
+  ClientReportSnapshot,
+  ClientReportArtifact,
   Order,
   OrderInput,
   OrderStatus,
   PaymentLog,
   PaymentLogInput,
+  ProjectCalendarEvent,
+  ProjectCommunication,
+  ProjectRecipient,
   SmsLog,
   SmsLogInput,
   SmsPreview
@@ -80,6 +86,182 @@ export function checkMicrosoftToken() {
     message?: string;
     error?: string;
   }>("/api/email/microsoft-token-check");
+}
+
+export function checkMicrosoftProjectCapabilities() {
+  return request<{
+    emailConfigured: boolean;
+    calendarConfigured: boolean;
+    tokenAvailable: boolean;
+    mailSendPermissionExpected: boolean;
+    calendarsReadWritePermissionExpected: boolean;
+    senderMailbox: string;
+    calendarOwnerMailbox: string;
+    missing: string[];
+    authMode: string;
+  }>("/api/integrations/microsoft/capabilities");
+}
+
+export function getProjectCommunicationsWorkspace(projectId: string) {
+  return request<{
+    communications: ProjectCommunication[];
+    calendarEvents: ProjectCalendarEvent[];
+  }>(`/api/projects/${projectId}/communications-workspace`);
+}
+
+export type ProjectCommunicationInput = {
+  subject: string;
+  bodyText: string;
+  toRecipients: ProjectRecipient[];
+  ccRecipients: ProjectRecipient[];
+  bccRecipients: ProjectRecipient[];
+  audience: "client" | "internal" | "mixed";
+  visibility: "internal" | "client_visible";
+  sourceType?: "manual_project_update" | "report_snapshot";
+  sourceId?: string | null;
+  attachmentRefs?: Array<Record<string, unknown>>;
+};
+
+export function createProjectCommunication(projectId: string, input: ProjectCommunicationInput) {
+  return request<ProjectCommunication>(`/api/projects/${projectId}/communications`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function sendProjectCommunication(projectId: string, communicationId: string, options: { retryUnknownConfirmed?: boolean } = {}) {
+  return request<{
+    communication: ProjectCommunication;
+  }>(`/api/projects/${projectId}/communications/${communicationId}/send`, {
+    method: "POST",
+    body: JSON.stringify(options)
+  });
+}
+
+export type ClientReportInput = Pick<
+  ClientProgressReport,
+  | "title"
+  | "reportingPeriodStart"
+  | "reportingPeriodEnd"
+  | "executiveSummary"
+  | "progressSummary"
+  | "nextSteps"
+  | "clientActions"
+  | "highlights"
+  | "risks"
+  | "milestones"
+  | "completedTasks"
+  | "upcomingTasks"
+  | "includeBudget"
+>;
+
+export type ReportEmailInput = {
+  subject: string;
+  bodyText: string;
+  toRecipients: ProjectRecipient[];
+  ccRecipients: ProjectRecipient[];
+  bccRecipients: ProjectRecipient[];
+};
+
+export function listProjectReports(projectId: string) {
+  return request<{ reports: ClientProgressReport[] }>(`/api/projects/${projectId}/reports`);
+}
+
+export function createClientProgressReport(projectId: string, input: ClientReportInput) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateClientProgressReport(projectId: string, reportId: string, input: ClientReportInput) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function submitClientProgressReport(projectId: string, reportId: string) {
+  return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/submit`, {
+    method: "POST"
+  });
+}
+
+export function approveClientProgressReport(projectId: string, reportId: string) {
+  return request<{ report: ClientProgressReport; snapshot: ClientReportSnapshot }>(`/api/projects/${projectId}/reports/${reportId}/approve`, {
+    method: "POST"
+  });
+}
+
+export async function downloadClientReportPdf(projectId: string, reportId: string, snapshotId: string) {
+  const response = await fetch(`/api/projects/${projectId}/reports/${reportId}/snapshots/${snapshotId}/pdf`, {
+    headers: await getAuthenticatedHeaders()
+  });
+
+  if (!response.ok) {
+    let data: unknown = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+    throw new Error(getApiErrorMessage(response.status, data));
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "client-progress-report.pdf",
+    artifactId: response.headers.get("x-accelprojects-artifact-id"),
+    sha256: response.headers.get("x-accelprojects-content-sha256")
+  };
+}
+
+export function emailClientReportSnapshot(projectId: string, reportId: string, snapshotId: string, input: ReportEmailInput) {
+  return request<{ communication: ProjectCommunication; artifact: ClientReportArtifact }>(`/api/projects/${projectId}/reports/${reportId}/snapshots/${snapshotId}/email`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export type ProjectCalendarEventInput = {
+  title: string;
+  descriptionText: string;
+  visibility: "internal" | "client_visible";
+  startDateTime: string;
+  endDateTime: string;
+  timeZone?: string;
+  isAllDay: boolean;
+  location: string;
+  attendees: ProjectRecipient[];
+  reminderMinutesBeforeStart: number;
+  relatedEntityType: "project" | "task" | "milestone" | "report" | "other";
+  relatedEntityId: string | null;
+};
+
+export function createProjectCalendarDraft(projectId: string, input: ProjectCalendarEventInput) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function createProjectCalendarEvent(projectId: string, calendarEventId: string) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}/create`, {
+    method: "POST"
+  });
+}
+
+export function updateProjectCalendarEvent(projectId: string, calendarEventId: string, input: ProjectCalendarEventInput) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function cancelProjectCalendarEvent(projectId: string, calendarEventId: string) {
+  return request<ProjectCalendarEvent>(`/api/projects/${projectId}/calendar-events/${calendarEventId}/cancel`, {
+    method: "POST"
+  });
 }
 
 export function checkStripeConfig() {
