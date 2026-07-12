@@ -10,6 +10,7 @@ import { validateMicrosoftEmailConfig } from "./microsoftEmailConfig.js";
 import { sendEmail } from "./mockEmailService.js";
 import { sendSms } from "./mockSmsService.js";
 import { requireProjectAccess } from "./projectAuthorization.js";
+import { applyLifecycle, LifecycleError, previewLifecycle } from "./lifecycleService.js";
 import {
   cancelCalendarEvent,
   createCalendarDraft,
@@ -329,6 +330,23 @@ app.get("/api/payments/stripe-config-check", requireFirebaseAuth, requireAdmin, 
 });
 
 app.use("/api", requireFirebaseAuth);
+
+function lifecycleInput(request) {
+  return { ...request.body, projectId: request.params.projectId, entityType: request.params.entityType, entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } };
+}
+
+function lifecycleFailure(response, error) {
+  const status = error instanceof LifecycleError ? error.status : 500;
+  return response.status(status).json({ success: false, error: error instanceof LifecycleError ? error.code : "lifecycle_operation_failed" });
+}
+
+app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/impact", requireProjectCommunication, async (request, response) => {
+  try { return response.json(await previewLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/actions", requireProjectCommunication, async (request, response) => {
+  try { return response.json(await applyLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
+});
 
 app.use("/api/portal", (_request, response, next) => {
   response.setHeader("Cache-Control", "private, no-store");

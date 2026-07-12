@@ -251,10 +251,19 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(updateDoc(userRef("other_pm", "viewer"), { role: "admin", updatedAt: "2026-07-10T02:00:00.000Z" }));
   });
 
-  it("allows administrators to perform authorized role updates and delete other users only", async () => {
+  it("allows authorized role updates but denies browser user deletion", async () => {
     await assertSucceeds(updateDoc(userRef("admin", "viewer"), { role: "contributor", updatedAt: "2026-07-10T02:00:00.000Z" }));
-    await assertSucceeds(deleteDoc(userRef("admin", "viewer")));
+    await assertFails(deleteDoc(userRef("admin", "viewer")));
     await assertFails(deleteDoc(userRef("admin", "admin")));
+  });
+
+  it("denies browser hard delete and lifecycle forgery for managed records", async () => {
+    const task = doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "tasks", "task_assigned"));
+    await assertFails(deleteDoc(projectRef("admin")));
+    await assertFails(deleteDoc(task));
+    await assertFails(updateDoc(task, { lifecycle: { schemaVersion: 1, state: "trashed", retentionClass: "operational_30d", legalHold: false, lastOperationId: "forged" } }));
+    await assertFails(updateDoc(projectRef("admin"), { lifecycle: { schemaVersion: 1, state: "archived", retentionClass: "business_7y", legalHold: false, lastOperationId: "forged" } }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("recordLifecycleOperations", "forged")), { id: "forged", actorId: "admin" }));
   });
 
   it("denies unauthorized organization updates and allows supported admin updates", async () => {

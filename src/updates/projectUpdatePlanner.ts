@@ -103,6 +103,26 @@ function replaceId(value: string, temporaryIdMap: Record<string, string>) {
 
 function resolveCollections(input: ProjectUpdatePlannerInput, temporaryIdMap: Record<string, string>, issues: ProjectUpdateIssue[]): ProjectUpdateResolvedCollections {
   const now = input.applyTimestamp ?? new Date().toISOString();
+  const lifecycleCollection = <T extends { id: string; lifecycle?: import("../lifecycle/types").RecordLifecycleMetadata }>(entityType: ProjectUpdateEntityType, original: T[], uploaded: T[]): T[] => {
+    const uploadedIds = new Set(uploaded.map((record) => record.id));
+    const operations = input.uploadedPackage.schemaVersion === "1.2" ? input.uploadedPackage.lifecycleOperations ?? [] : [];
+    const retained = original.filter((record) => !uploadedIds.has(record.id)).map((record) => {
+      const operation = operations.find((item) => item.entityType === entityType && item.entityId === record.id);
+      if (!operation) {
+        issues.push(issue("implicit_removal_not_allowed", `${entityType} record ${record.id} was omitted. Omission does not delete records; add an explicit schema 1.2 lifecycle operation.`, { entityType, entityId: record.id }));
+        return record;
+      }
+      const priorState = record.lifecycle?.state ?? "active";
+      if (operation.expectedPriorState && operation.expectedPriorState !== priorState) {
+        issues.push(issue("invalid_lifecycle_operation", `${entityType} record ${record.id} no longer has the expected lifecycle state.`, { entityType, entityId: record.id }));
+        return record;
+      }
+      const state = operation.action === "restore" ? "active" : operation.action === "remove" ? "removed" : operation.action === "archive" ? "archived" : "trashed";
+      const deadline = new Date(Date.parse(now) + 30 * 86_400_000).toISOString();
+      return { ...record, lifecycle: { schemaVersion: 1, state, retentionClass: record.lifecycle?.retentionClass ?? (operation.action === "remove" ? "relationship_30d" : "operational_30d"), legalHold: record.lifecycle?.legalHold === true, lastOperationId: `file-${input.uploadedFileHash.slice(0, 16)}-${record.id}`, ...(operation.action === "trash" ? { trashed: { at: now, by: input.currentUser.id, reason: { code: "update_file", note: operation.reason }, restoreDeadline: deadline }, purgeEligibleAt: deadline } : {}), ...(operation.action === "remove" ? { removed: { at: now, by: input.currentUser.id, reason: { code: "update_file", note: operation.reason }, restoreDeadline: deadline }, purgeEligibleAt: deadline } : {}), ...(operation.action === "archive" ? { archived: { at: now, by: input.currentUser.id, reason: { code: "update_file", note: operation.reason } } } : {}), ...(operation.action === "restore" ? { restored: { at: now, by: input.currentUser.id } } : {}) } };
+    });
+    return [...uploaded, ...retained];
+  };
   const originalTasks = collectionById(input.originalPackage.tasks);
   const originalDocuments = collectionById(input.originalPackage.documents);
   const resultProject: Project = {
@@ -113,17 +133,17 @@ function resolveCollections(input: ProjectUpdatePlannerInput, temporaryIdMap: Re
     lastStructuralChangeAt: now
   };
 
-  const phases: Phase[] = input.uploadedPackage.phases.map((phase) => ({
+  const phases: Phase[] = lifecycleCollection("phases", input.originalPackage.phases, input.uploadedPackage.phases).map((phase) => ({
     ...phase,
     id: replaceId(phase.id, temporaryIdMap),
     projectId: input.projectId
   }));
-  const milestones: Milestone[] = input.uploadedPackage.milestones.map((milestone) => ({
+  const milestones: Milestone[] = lifecycleCollection("milestones", input.originalPackage.milestones, input.uploadedPackage.milestones).map((milestone) => ({
     ...milestone,
     id: replaceId(milestone.id, temporaryIdMap),
     projectId: input.projectId
   }));
-  const tasks: Task[] = input.uploadedPackage.tasks.map((task) => {
+  const tasks: Task[] = lifecycleCollection("tasks", input.originalPackage.tasks, input.uploadedPackage.tasks).map((task) => {
     const originalTask = originalTasks.get(task.id);
     const nextStatus = task.status;
     const completedAt = nextStatus === "done"
@@ -138,18 +158,18 @@ function resolveCollections(input: ProjectUpdatePlannerInput, temporaryIdMap: Re
       completedAt
     };
   });
-  const taskDependencies: TaskDependency[] = input.uploadedPackage.taskDependencies.map((dependency) => ({
+  const taskDependencies: TaskDependency[] = lifecycleCollection("taskDependencies", input.originalPackage.taskDependencies, input.uploadedPackage.taskDependencies).map((dependency) => ({
     ...dependency,
     id: replaceId(dependency.id, temporaryIdMap),
     taskId: replaceId(dependency.taskId, temporaryIdMap),
     dependsOnTaskId: replaceId(dependency.dependsOnTaskId, temporaryIdMap)
   }));
-  const risks: ProjectRisk[] = input.uploadedPackage.risks.map((risk) => ({
+  const risks: ProjectRisk[] = lifecycleCollection("risks", input.originalPackage.risks, input.uploadedPackage.risks).map((risk) => ({
     ...risk,
     id: replaceId(risk.id, temporaryIdMap),
     projectId: input.projectId
   }));
-  const documents: ProjectDocument[] = input.uploadedPackage.documents.map((document) => {
+  const documents: ProjectDocument[] = lifecycleCollection("documents", input.originalPackage.documents, input.uploadedPackage.documents).map((document) => {
     const originalDocument = originalDocuments.get(document.id);
 
     return {
@@ -159,7 +179,7 @@ function resolveCollections(input: ProjectUpdatePlannerInput, temporaryIdMap: Re
       createdAt: originalDocument?.createdAt ?? now
     };
   });
-  const metrics: ProjectMetric[] = input.uploadedPackage.metrics.map((metric) => ({
+  const metrics: ProjectMetric[] = lifecycleCollection("metrics", input.originalPackage.metrics, input.uploadedPackage.metrics).map((metric) => ({
     ...metric,
     id: replaceId(metric.id, temporaryIdMap),
     projectId: input.projectId

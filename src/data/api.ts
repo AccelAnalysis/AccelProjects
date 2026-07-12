@@ -25,6 +25,7 @@ import type {
   SmsPreview
 } from "../types";
 import { auth } from "../firebase";
+import type { LifecycleAction, LifecycleEntityType, LifecycleImpact, LifecycleOperation, LifecycleReason } from "../lifecycle/types";
 
 export const services = [
   { name: "Business Consultation", amount: 25 },
@@ -33,6 +34,24 @@ export const services = [
 ] as const;
 
 export const orderStatuses: OrderStatus[] = ["draft", "pending_payment", "paid", "failed"];
+
+export type LifecycleRequest = {
+  action: LifecycleAction;
+  expectedProjectRevision: number;
+  idempotencyKey: string;
+  reason: LifecycleReason;
+  previewToken?: string;
+  strategy?: string;
+  confirmed?: boolean;
+};
+
+export function previewRecordLifecycle(projectId: string, entityType: LifecycleEntityType, entityId: string, input: Omit<LifecycleRequest, "previewToken" | "confirmed">) {
+  return request<{ projectRevision: number; entityState: string; impact: LifecycleImpact; previewToken: string }>(`/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/impact`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function applyRecordLifecycle(projectId: string, entityType: LifecycleEntityType, entityId: string, input: LifecycleRequest) {
+  return request<{ operation: LifecycleOperation; duplicate: boolean }>(`/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/actions`, { method: "POST", body: JSON.stringify(input) });
+}
 
 async function getAuthenticatedHeaders(options?: RequestInit) {
   const token = await auth?.currentUser?.getIdToken();

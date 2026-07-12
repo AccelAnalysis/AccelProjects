@@ -34,6 +34,14 @@ service cloud.firestore {
         && signedInUserRole(organizationId) in ["admin", "project_manager"];
     }
 
+    function lifecycleNotCreated() {
+      return !("lifecycle" in request.resource.data);
+    }
+
+    function lifecycleUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["lifecycle"]);
+    }
+
     function isProjectManagerRole(organizationId) {
       return isOrgMember(organizationId)
         && signedInUserRole(organizationId) == "project_manager";
@@ -410,14 +418,15 @@ service cloud.firestore {
         allow create: if isOwnBootstrapProfile(organizationId, userId) || canAdminWriteUserProfile(organizationId, userId);
         allow get: if (isSignedIn() && isAccelOrg(organizationId) && userId == request.auth.uid) || isInternalOrgMember(organizationId);
         allow list: if isInternalOrgMember(organizationId);
-        allow update: if canUpdateOwnProfile(organizationId, userId) || canAdminWriteUserProfile(organizationId, userId);
-        allow delete: if isAdmin(organizationId) && userId != request.auth.uid;
+        allow update: if (canUpdateOwnProfile(organizationId, userId) || canAdminWriteUserProfile(organizationId, userId)) && lifecycleUnchanged();
+        allow delete: if false;
       }
 
       match /clients/{clientId} {
         allow read: if isInternalOrgMember(organizationId);
-        allow create, update: if canWriteProjectData(organizationId);
-        allow delete: if isAdmin(organizationId);
+        allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+        allow update: if canWriteProjectData(organizationId) && lifecycleUnchanged();
+        allow delete: if false;
       }
 
       match /imports/{importId} {
@@ -440,68 +449,81 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      match /recordLifecycleOperations/{operationId} {
+        allow read, create, update, delete: if false;
+      }
+
       match /projects/{projectId} {
         allow get: if canReadProject(organizationId, projectId);
         allow list: if canListProject(organizationId);
-        allow create: if canWriteProjectData(organizationId);
-        allow update: if canManageProjectSchedule(organizationId, projectId)
-          || canWriteProjectRevisionFields(organizationId, projectId);
-        allow delete: if isAdmin(organizationId);
+        allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+        allow update: if lifecycleUnchanged() && (canManageProjectSchedule(organizationId, projectId)
+          || canWriteProjectRevisionFields(organizationId, projectId));
+        allow delete: if false;
 
         match /members/{memberId} {
           allow read: if canReadProject(organizationId, projectId)
             || (isSignedIn() && resource.data.userId == request.auth.uid);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /phases/{phaseId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /tasks/{taskId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow delete: if canManageProjectSchedule(organizationId, projectId);
-          allow update: if canManageProjectSchedule(organizationId, projectId)
-            || canContributorUpdateAssignedTask(organizationId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow delete: if false;
+          allow update: if lifecycleUnchanged() && (canManageProjectSchedule(organizationId, projectId)
+            || canContributorUpdateAssignedTask(organizationId));
 
           match /comments/{commentId} {
             allow read: if canReadProject(organizationId, projectId);
-            allow write: if canReadProject(organizationId, projectId);
+            allow create: if canReadProject(organizationId, projectId) && lifecycleNotCreated();
+            allow update: if canReadProject(organizationId, projectId) && lifecycleUnchanged();
+            allow delete: if false;
           }
         }
 
         match /taskDependencies/{dependencyId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /risks/{riskId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /documents/{documentId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /metrics/{metricId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /milestones/{milestoneId} {
           allow read: if canReadProject(organizationId, projectId);
-          allow create: if canWriteProjectData(organizationId);
-          allow update, delete: if canManageProjectSchedule(organizationId, projectId);
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+          allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
+          allow delete: if false;
         }
 
         match /activityEvents/{eventId} {

@@ -55,7 +55,7 @@ async function planFor(mutator: (pkg: Awaited<ReturnType<typeof sourceFixture>>[
 }
 
 describe("project update provenance and planning", () => {
-  it("verifies a known schema 1.1 export snapshot", async () => {
+  it("verifies a known schema 1.2 export snapshot", async () => {
     const { originalPackage, packageJson, sourceSnapshot } = await sourceFixture();
     const result = await verifyProjectUpdateSource({
       projectId,
@@ -117,13 +117,26 @@ describe("project update provenance and planning", () => {
     ]));
   });
 
-  it("blocks deleting tasks that have comments", async () => {
+  it("blocks implicit omission instead of deleting commented tasks", async () => {
     const commentedTaskId = initialProjectState.taskComments[0].taskId;
     const plan = await planFor((pkg) => {
       pkg.tasks = pkg.tasks.filter((task) => task.id !== commentedTaskId);
       pkg.taskDependencies = pkg.taskDependencies.filter((dependency) => dependency.taskId !== commentedTaskId && dependency.dependsOnTaskId !== commentedTaskId);
     });
 
-    expect(plan.validationIssues.map((issue) => issue.code)).toContain("task_with_comments_cannot_be_removed");
+    expect(plan.validationIssues.map((issue) => issue.code)).toContain("implicit_removal_not_allowed");
+    expect(plan.resultCanonicalPackage.tasks.some((task) => task.id === commentedTaskId)).toBe(true);
+  });
+
+  it("turns an explicit schema 1.2 omission into a retained lifecycle transition", async () => {
+    const milestoneId = initialProjectState.milestones.find((milestone) => milestone.projectId === projectId)!.id;
+    const plan = await planFor((pkg) => {
+      pkg.milestones = pkg.milestones.filter((milestone) => milestone.id !== milestoneId);
+      pkg.lifecycleOperations = [{ entityType: "milestones", entityId: milestoneId, action: "trash", reason: "Duplicate milestone", expectedPriorState: "active" }];
+    });
+
+    expect(plan.validationIssues.filter((issue) => issue.severity === "error")).toHaveLength(0);
+    expect(plan.removals).toHaveLength(0);
+    expect(plan.resultCanonicalPackage.milestones.find((milestone) => milestone.id === milestoneId)?.lifecycle?.state).toBe("trashed");
   });
 });

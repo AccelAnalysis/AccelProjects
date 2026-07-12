@@ -1,6 +1,7 @@
 import { buildProjectPath } from "../routing/projectRoutes";
 import type { Client, Milestone, Project, ProjectActivityEvent, ProjectState, Task, User, UserRole } from "../types";
 import { addDays, compareDateOnly, daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
+import { isLifecycleActive } from "../lifecycle/policy";
 
 export const homeUpcomingMilestoneWindowDays = 30;
 const myPriorityLimit = 8;
@@ -118,7 +119,7 @@ export function createHomeDashboardView({
   const clientById = new Map(projectState.clients.map((client) => [client.id, client]));
   const projectById = new Map(accessibleProjects.map((project) => [project.id, project]));
   const userById = new Map(projectState.users.map((user) => [user.id, user]));
-  const tasks = projectState.tasks.filter((task) => accessibleProjectIds.has(task.projectId));
+  const tasks = projectState.tasks.filter((task) => accessibleProjectIds.has(task.projectId) && isLifecycleActive(task));
   const activeProjects = accessibleProjects.filter((project) => !isTerminalProject(project));
   const activeProjectIds = new Set(activeProjects.map((project) => project.id));
   const activeTasks = tasks.filter((task) => activeProjectIds.has(task.projectId));
@@ -161,8 +162,9 @@ export function createHomeDashboardView({
 }
 
 export function getAccessibleProjects(projectState: ProjectState, role: UserRole, userProfile: User | null) {
+  const activeProjects = projectState.projects.filter(isLifecycleActive);
   if (role === "admin" || role === "project_manager" || role === "viewer") {
-    return projectState.projects;
+    return activeProjects;
   }
 
   if (!userProfile) {
@@ -174,14 +176,14 @@ export function getAccessibleProjects(projectState: ProjectState, role: UserRole
     .map((member) => member.projectId));
 
   if (role === "client") {
-    return projectState.projects.filter((project) => memberProjectIds.has(project.id));
+    return activeProjects.filter((project) => memberProjectIds.has(project.id));
   }
 
   const assignedProjectIds = new Set(projectState.tasks
     .filter((task) => task.assigneeId === userProfile.id)
     .map((task) => task.projectId));
 
-  return projectState.projects.filter((project) => (
+  return activeProjects.filter((project) => (
     project.ownerId === userProfile.id
     || memberProjectIds.has(project.id)
     || assignedProjectIds.has(project.id)

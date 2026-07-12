@@ -1,3 +1,5 @@
+import type { RecordLifecycleMetadata } from "./lifecycle/types";
+
 export type OrderStatus = "draft" | "pending_payment" | "paid" | "failed";
 export type PaymentStatus = "unpaid" | "pending" | "paid" | "failed" | "canceled";
 
@@ -127,6 +129,7 @@ export type User = {
   notificationPreferences?: NotificationPreferences;
   createdAt?: string;
   updatedAt?: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Organization = {
@@ -144,6 +147,7 @@ export type Client = {
   email: string;
   phone: string;
   status: "lead" | "active" | "paused" | "archived";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Project = {
@@ -164,6 +168,7 @@ export type Project = {
   updatedAt: string;
   revision?: number;
   lastStructuralChangeAt?: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectMember = {
@@ -171,6 +176,7 @@ export type ProjectMember = {
   projectId: string;
   userId: string;
   role: "sponsor" | "lead" | "contributor" | "observer";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Phase = {
@@ -181,6 +187,7 @@ export type Phase = {
   startDate: string;
   endDate: string;
   sortOrder?: number;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Task = {
@@ -197,6 +204,7 @@ export type Task = {
   sortOrder?: number;
   estimateHours: number;
   completedAt: string | null;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type TaskComment = {
@@ -206,6 +214,7 @@ export type TaskComment = {
   body: string;
   visibility: "internal" | "client";
   createdAt: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type TaskDependency = {
@@ -213,6 +222,7 @@ export type TaskDependency = {
   taskId: string;
   dependsOnTaskId: string;
   type: "finish_to_start" | "start_to_start" | "finish_to_finish";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectRisk = {
@@ -223,6 +233,7 @@ export type ProjectRisk = {
   probability: "low" | "medium" | "high";
   status: "monitoring" | "mitigating" | "resolved";
   mitigationPlan: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Milestone = {
@@ -231,6 +242,7 @@ export type Milestone = {
   name: string;
   date: string;
   status: "planned" | "at_risk" | "complete";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectDocument = {
@@ -241,6 +253,7 @@ export type ProjectDocument = {
   url: string;
   ownerId: string;
   createdAt: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectMetric = {
@@ -250,6 +263,7 @@ export type ProjectMetric = {
   value: number;
   suffix: string;
   tone: "success" | "warning" | "danger" | "info";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectActivityEvent = {
