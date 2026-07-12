@@ -282,7 +282,11 @@ export function TaskDetailPanel({
   onClose,
   onUpdateTask,
   onAddComment,
-  lifecycleActions
+  lifecycleActions,
+  currentUserId,
+  canModerateComments = false,
+  onEditComment,
+  onRedactComment
 }: {
   task: Task;
   phases: Phase[];
@@ -294,10 +298,15 @@ export function TaskDetailPanel({
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onAddComment: (taskId: string, body: string) => void;
   lifecycleActions?: ReactNode;
+  currentUserId?: string;
+  canModerateComments?: boolean;
+  onEditComment?: (commentId: string, body: string) => void;
+  onRedactComment?: (commentId: string, reason: string) => void;
 }) {
   const [newComment, setNewComment] = useTaskCommentDraft(task.id);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null); const [editBody, setEditBody] = useState(""); const [redactingCommentId, setRedactingCommentId] = useState<string | null>(null); const [redactionReason, setRedactionReason] = useState("");
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -392,8 +401,11 @@ export function TaskDetailPanel({
         {comments.map((comment) => (
           <article className="comment-card" key={comment.id}>
             <strong>{getUserName(users, comment.authorId)}</strong>
-            <p>{comment.body}</p>
-            <span>{new Date(comment.createdAt).toLocaleString()}</span>
+            <p>{comment.moderation?.state === "removed_by_author" ? "Comment removed by author" : comment.moderation?.state === "redacted_by_manager" ? "Comment redacted by project manager" : comment.body}</p>
+            <span>{new Date(comment.createdAt).toLocaleString()}{comment.editedAt ? " · Edited" : ""}</span>
+            {!comment.moderation && editingCommentId === comment.id ? <form onSubmit={(event) => { event.preventDefault(); onEditComment?.(comment.id, editBody); setEditingCommentId(null); }}><textarea aria-label="Edit comment" value={editBody} onChange={(event) => setEditBody(event.target.value)} /><button type="submit">Save edit</button></form> : null}
+            {!comment.moderation && redactingCommentId === comment.id ? <form onSubmit={(event) => { event.preventDefault(); onRedactComment?.(comment.id, redactionReason); setRedactingCommentId(null); }}><input aria-label="Redaction reason" value={redactionReason} onChange={(event) => setRedactionReason(event.target.value)} /><button disabled={!redactionReason.trim()} type="submit">Confirm redaction</button></form> : null}
+            {!comment.moderation ? <div className="button-row">{comment.authorId === currentUserId && onEditComment ? <button className="link-button" type="button" onClick={() => { setEditingCommentId(comment.id); setEditBody(comment.body); }}>Edit</button> : null}{canModerateComments && onRedactComment ? <button className="link-button" type="button" onClick={() => setRedactingCommentId(comment.id)}>Redact</button> : null}</div> : null}
           </article>
         ))}
       </div>

@@ -246,6 +246,11 @@ function validateExistingIdentity<T extends { id: string; projectId?: string }>(
   });
 }
 
+function validateLifecycleFields<T extends { id: string; lifecycle?: unknown }>(entityType: ProjectUpdateEntityType, originalItems: T[], uploadedItems: T[], issues: ProjectUpdateIssue[]) {
+  const original = collectionById(originalItems);
+  uploadedItems.forEach((item) => { const prior = original.get(item.id); if (prior && !sameValue(prior.lifecycle, item.lifecycle)) issues.push(issue("immutable_field_changed", `${entityType} lifecycle, retention, legal-hold, actor, and audit metadata cannot be edited directly. Use lifecycleOperations or the server workflow.`, { entityType, entityId: item.id, path: `$.${entityType}[${item.id}].lifecycle` })); });
+}
+
 function validateResolvedState(input: ProjectUpdatePlannerInput, result: ProjectUpdateResolvedCollections, issues: ProjectUpdateIssue[]) {
   if (!projectStatuses.has(result.project.status) || !projectHealth.has(result.project.health) || !priorities.has(result.project.priority)) {
     issues.push(issue("invalid_project", "Project status, health, or priority is invalid.", { entityType: "project", entityId: result.project.id }));
@@ -395,6 +400,13 @@ export async function createProjectUpdatePlan(input: ProjectUpdatePlannerInput):
   validateExistingIdentity("risks", input.originalPackage.risks, input.uploadedPackage.risks, issues);
   validateExistingIdentity("documents", input.originalPackage.documents, input.uploadedPackage.documents, issues);
   validateExistingIdentity("metrics", input.originalPackage.metrics, input.uploadedPackage.metrics, issues);
+  validateLifecycleFields("phases", input.originalPackage.phases, input.uploadedPackage.phases, issues);
+  validateLifecycleFields("milestones", input.originalPackage.milestones, input.uploadedPackage.milestones, issues);
+  validateLifecycleFields("tasks", input.originalPackage.tasks, input.uploadedPackage.tasks, issues);
+  validateLifecycleFields("taskDependencies", input.originalPackage.taskDependencies, input.uploadedPackage.taskDependencies, issues);
+  validateLifecycleFields("risks", input.originalPackage.risks, input.uploadedPackage.risks, issues);
+  validateLifecycleFields("documents", input.originalPackage.documents, input.uploadedPackage.documents, issues);
+  validateLifecycleFields("metrics", input.originalPackage.metrics, input.uploadedPackage.metrics, issues);
 
   const temporaryIdMap: Record<string, string> = {};
   collectTempIds("phases", input.originalPackage.phases, input.uploadedPackage.phases, input, issues, temporaryIdMap);

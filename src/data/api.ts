@@ -22,7 +22,10 @@ import type {
   ProjectRecipient,
   SmsLog,
   SmsLogInput,
-  SmsPreview
+  SmsPreview,
+  ProjectDocument,
+  ProjectDocumentVersion,
+  TaskComment
 } from "../types";
 import { auth } from "../firebase";
 import type { LifecycleAction, LifecycleEntityType, LifecycleImpact, LifecycleOperation, LifecycleReason } from "../lifecycle/types";
@@ -60,6 +63,24 @@ export function applyRecordLifecycle(projectId: string, entityType: LifecycleEnt
 export function listLifecycleOperations() {
   return request<{ operations: LifecycleOperation[] }>("/api/lifecycle/operations");
 }
+
+export async function uploadProjectDocument(projectId: string, input: { title: string; type: ProjectDocument["type"]; category: NonNullable<ProjectDocument["category"]>; visibility: NonNullable<ProjectDocument["visibility"]>; ownerId: string; file: File }) {
+  const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(reader.error); reader.readAsDataURL(input.file); });
+  return request<{ document: ProjectDocument; version: ProjectDocumentVersion }>(`/api/projects/${projectId}/documents`, { method: "POST", body: JSON.stringify({ ...input, file: { filename: input.file.name, contentType: input.file.type, base64 } }) });
+}
+export async function replaceProjectDocumentVersion(projectId: string, documentId: string, input: { file: File }) { const base64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(reader.error); reader.readAsDataURL(input.file); }); return request<{ document: ProjectDocument; version: ProjectDocumentVersion }>(`/api/projects/${projectId}/documents/${documentId}/versions`, { method: "POST", body: JSON.stringify({ file: { filename: input.file.name, contentType: input.file.type, base64 } }) }); }
+export function listProjectDocumentVersions(projectId: string, documentId: string) { return request<{ versions: ProjectDocumentVersion[] }>(`/api/projects/${projectId}/documents/${documentId}/versions`); }
+export async function downloadProjectDocumentVersion(projectId: string, documentId: string, versionId: string) { const response = await fetch(`/api/projects/${projectId}/documents/${documentId}/versions/${versionId}/download`, { headers: await getAuthenticatedHeaders() }); if (!response.ok) throw new Error(getApiErrorMessage(response.status, await response.json().catch(() => ({})))); return { blob: await response.blob(), filename: response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "document" }; }
+export function createTaskComment(projectId: string, taskId: string, body: string, visibility: TaskComment["visibility"]) { return request<TaskComment>(`/api/projects/${projectId}/tasks/${taskId}/comments`, { method: "POST", body: JSON.stringify({ body, visibility }) }); }
+export function editTaskComment(projectId: string, taskId: string, commentId: string, body: string) { return request<TaskComment>(`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}`, { method: "PATCH", body: JSON.stringify({ body }) }); }
+export function redactTaskComment(projectId: string, taskId: string, commentId: string, reason: string) { return request<TaskComment>(`/api/projects/${projectId}/tasks/${taskId}/comments/${commentId}/redact`, { method: "POST", body: JSON.stringify({ reason }) }); }
+export function updateLegalHold(input: { projectId?: string; entityType: LifecycleEntityType; entityId: string; hold: boolean; reason: string; idempotencyKey: string }) { return request<{ operation: LifecycleOperation }>("/api/admin/lifecycle/legal-hold", { method: "POST", body: JSON.stringify(input) }); }
+export function createLifecyclePurgeJob(input: { projectId?: string; entityType: LifecycleEntityType; entityId: string; idempotencyKey: string }) { return request<{ job: Record<string, unknown> }>("/api/admin/lifecycle/purge-jobs", { method: "POST", body: JSON.stringify(input) }); }
+export function runLifecyclePurgeJob(jobId: string) { return request<{ job: Record<string, unknown> }>(`/api/admin/lifecycle/purge-jobs/${jobId}/run`, { method: "POST" }); }
+export function getLifecycleDiagnostics() { return request<Record<string, unknown>>("/api/admin/lifecycle/diagnostics"); }
+export function withdrawClientProgressReport(projectId: string, reportId: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/withdraw`, { method: "POST" }); }
+export function voidClientProgressReport(projectId: string, reportId: string, reason: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/void`, { method: "POST", body: JSON.stringify({ reason }) }); }
+export function supersedeClientProgressReport(projectId: string, reportId: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/supersede`, { method: "POST" }); }
 
 async function getAuthenticatedHeaders(options?: RequestInit) {
   const token = await auth?.currentUser?.getIdToken();

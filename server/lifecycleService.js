@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { API_ORGANIZATION_ID, getAdminApp } from "./apiAuth.js";
 
 const retentionDays = 30;
@@ -14,6 +15,9 @@ const registry = {
   risk: { collection: "risks", actions: ["resolve", "archive", "trash", "restore", "purge"], label: "title" },
   document: { collection: "documents", actions: ["archive", "trash", "restore", "purge"], label: "title" },
   metric: { collection: "metrics", actions: ["archive", "trash", "restore", "purge"], label: "label" }
+  ,report: { collection: "reports", actions: ["trash", "restore", "purge"], label: "title" }
+  ,communication: { collection: "communications", actions: ["trash", "restore", "purge"], label: "subject" }
+  ,calendarEvent: { collection: "calendarEvents", actions: ["trash", "restore", "archive", "purge"], label: "title" }
 };
 
 export class LifecycleError extends Error {
@@ -44,6 +48,11 @@ async function buildImpact(db, projectId, entityType, entityId, { action, strate
     const versions = await project.collection("versions").get();
     const activities = await project.collection("activityEvents").get();
     retainImmutable.push(item("projectVersion", versions.docs.map((doc) => doc.id)), item("activityEvent", activities.docs.map((doc) => doc.id)));
+    if (action === "restore") {
+      const current = await project.get(); const data = current.data(); const [client, owner] = await Promise.all([db.doc(`organizations/${API_ORGANIZATION_ID}/clients/${data.clientId}`).get(), db.doc(`organizations/${API_ORGANIZATION_ID}/users/${data.ownerId}`).get()]);
+      if (!client.exists || (client.data()?.lifecycle?.state || "active") !== "active") blockers.push("active_client_required");
+      if (!owner.exists || (owner.data()?.lifecycle?.state || "active") !== "active") blockers.push("active_project_owner_required");
+    }
   } else if (entityType === "phase") {
     const tasks = await project.collection("tasks").where("phaseId", "==", entityId).get();
     transition.push(item("task", tasks.docs.map((doc) => doc.id)));
@@ -94,12 +103,16 @@ async function buildImpact(db, projectId, entityType, entityId, { action, strate
       const replacement = await project.collection("members").doc(replacementUserId).get();
       if (!replacement.exists || (replacement.data()?.lifecycle?.state || "active") !== "active" || replacementUserId === entityId) blockers.push("invalid_replacement_member");
     }
+    if (action === "restore") { const user = await db.doc(`organizations/${API_ORGANIZATION_ID}/users/${entityId}`).get(); if (!user.exists || (user.data()?.lifecycle?.state || "active") !== "active") blockers.push("active_organization_user_required"); }
   } else if (entityType === "milestone") {
     const events = await project.collection("calendarEvents").where("relatedEntityId", "==", entityId).get();
     retainImmutable.push(item("calendarEvent", events.docs.map((doc) => doc.id)));
     if (!events.empty) warnings.push("linked_calendar_events_will_be_retained");
   } else if (entityType === "risk") {
     warnings.push("approved_report_snapshots_remain_unchanged");
+  } else if (entityType === "document" && action === "restore") {
+    const document = await project.collection("documents").doc(entityId).get(); const data = document.data();
+    if (data?.managed) { const version = await document.ref.collection("versions").doc(data.currentVersionId).get(); if (!version.exists) blockers.push("document_version_missing"); else { try { const [exists] = await getStorage(getAdminApp()).bucket(process.env.FIREBASE_STORAGE_BUCKET).file(version.data().storagePath).exists(); if (!exists) blockers.push("storage_object_missing"); } catch { blockers.push("storage_verification_failed"); } } }
   }
   return { transition: transition.filter((entry) => entry.count), reassign: reassign.filter((entry) => entry.count), removeRelationships: removeRelationships.filter((entry) => entry.count), retainImmutable: retainImmutable.filter((entry) => entry.count), blockers, warnings, requiresTypedConfirmation: blockers.length > 0 || warnings.length > 0 };
 }
@@ -108,7 +121,12 @@ function validateAction(definition, action, role, record, now) {
   if (!definition.actions.includes(action)) throw new LifecycleError("unsupported_action");
   if (!(["admin", "project_manager"].includes(role))) throw new LifecycleError("permission_denied", 403);
   if (action === "purge" && role !== "admin") throw new LifecycleError("permission_denied", 403);
+  if (action === "purge") throw new LifecycleError("durable_purge_job_required", 409);
   if (record.source === "computed" && ["trash", "purge"].includes(action)) throw new LifecycleError("computed_metric_not_deletable", 409);
+  if ((record.locked || ["contract", "billing", "approved_deliverable", "report_artifact"].includes(record.category) || record.type === "contract") && ["trash", "purge"].includes(action)) throw new LifecycleError("protected_document_retention", 409);
+  if (record.latestApprovedSnapshotId && ["trash", "purge"].includes(action)) throw new LifecycleError("approved_report_immutable", 409);
+  if (record.channel === "email" && !["draft", "failed"].includes(record.status) && ["trash", "purge"].includes(action)) throw new LifecycleError("communication_history_retained", 409);
+  if (record.calendarOwnerEmail && record.graphEventId && ["trash", "purge"].includes(action)) throw new LifecycleError("scheduled_calendar_event_retained", 409);
   if (record.lifecycle?.legalHold && ["trash", "purge"].includes(action)) throw new LifecycleError("legal_hold", 409);
   if (action === "restore" && !["archived", "trashed", "removed"].includes(stateOf(record))) throw new LifecycleError("not_restorable", 409);
   if (action === "purge" && (!record.lifecycle?.purgeEligibleAt || Date.parse(record.lifecycle.purgeEligibleAt) > now.getTime())) throw new LifecycleError("retention_not_satisfied", 409);
@@ -153,14 +171,11 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
     const revisionAfter = (project.revision || 1) + 1;
     const timestamp = now.toISOString(); const deadline = new Date(now.getTime() + retentionDays * 86400000).toISOString();
     const operation = { id: opId, idempotencyKey: input.idempotencyKey, organizationId: API_ORGANIZATION_ID, projectId: input.projectId, entityType: input.entityType, entityId: input.entityId, entityDisplayLabel: String(record[registry[input.entityType].label] || input.entityId), action: input.action, requestedAction: input.action, resultingLifecycleState: resultingState, actor: input.actor, actorId: input.actor.id, actorRole: input.actor.role, reason: { code: input.reason.code, ...(input.reason.note ? { note: input.reason.note.slice(0, 500) } : {}) }, requestedAt: timestamp, appliedAt: timestamp, priorState: stateOf(record), resultingState, impactCounts: Object.fromEntries([...preview.impact.transition, ...preview.impact.removeRelationships, ...preview.impact.retainImmutable].map((entry) => [entry.entityType, entry.count])), strategy: input.strategy || "retain_related", projectRevisionBefore: project.revision || 1, projectRevisionAfter: revisionAfter, status: "applied", purgeEligibleAt: input.action === "purge" ? record.lifecycle?.purgeEligibleAt : deadline, immutableHistoryRetained: true };
-    if (input.action === "purge") transaction.delete(entityRef);
-    else {
-      const lifecycle = { schemaVersion: 1, state: resultingState, retentionClass: record.lifecycle?.retentionClass || "operational_30d", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId };
-      if (input.action === "archive") lifecycle.archived = { at: timestamp, by: input.actor.id, reason: operation.reason };
-      if (["trash", "remove"].includes(input.action)) { lifecycle[input.action === "trash" ? "trashed" : "removed"] = { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }; lifecycle.purgeEligibleAt = deadline; }
-      if (input.action === "restore") lifecycle.restored = { at: timestamp, by: input.actor.id };
-      transaction.update(entityRef, { lifecycle });
-    }
+    const lifecycle = { schemaVersion: 1, state: resultingState, retentionClass: record.lifecycle?.retentionClass || "operational_30d", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId };
+    if (input.action === "archive") lifecycle.archived = { at: timestamp, by: input.actor.id, reason: operation.reason };
+    if (["trash", "remove"].includes(input.action)) { lifecycle[input.action === "trash" ? "trashed" : "removed"] = { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }; lifecycle.purgeEligibleAt = deadline; }
+    if (input.action === "restore") lifecycle.restored = { at: timestamp, by: input.actor.id };
+    transaction.update(entityRef, { lifecycle });
     if (input.entityType === "task" && input.action === "trash") {
       const dependencies = preview.impact.removeRelationships.find((entry) => entry.entityType === "taskDependency")?.ids || [];
       dependencies.forEach((dependencyId) => transaction.update(projectRef.collection("taskDependencies").doc(dependencyId), { lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", legalHold: false, lastOperationId: opId, removed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } }));
@@ -220,8 +235,7 @@ export async function applyOrganizationLifecycle(input, { db = database(), now =
     const state = { archive: "archived", trash: "trashed", restore: "active", purge: "purged" }[input.action];
     const reason = { code: input.reason.code, ...(input.reason.note ? { note: input.reason.note.slice(0, 500) } : {}) };
     const operation = { id: opId, idempotencyKey: input.idempotencyKey, organizationId: API_ORGANIZATION_ID, entityType: "client", entityId: input.entityId, entityDisplayLabel: record.name || input.entityId, action: input.action, requestedAction: input.action, actor: input.actor, actorId: input.actor.id, actorRole: input.actor.role, reason, requestedAt: timestamp, appliedAt: timestamp, priorState: stateOf(record), resultingState: state, impactCounts: { project: preview.impact.retainImmutable[0]?.count || 0 }, status: "applied", purgeEligibleAt: input.action === "purge" ? record.lifecycle?.purgeEligibleAt : deadline, immutableHistoryRetained: true };
-    if (input.action === "purge") transaction.delete(target);
-    else transaction.update(target, { lifecycle: { schemaVersion: 1, state, retentionClass: "business_7y", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId, ...(input.action === "archive" ? { archived: { at: timestamp, by: input.actor.id, reason } } : {}), ...(input.action === "trash" ? { trashed: { at: timestamp, by: input.actor.id, reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } : {}), ...(input.action === "restore" ? { restored: { at: timestamp, by: input.actor.id } } : {}) } });
+    transaction.update(target, { lifecycle: { schemaVersion: 1, state, retentionClass: "business_7y", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId, ...(input.action === "archive" ? { archived: { at: timestamp, by: input.actor.id, reason } } : {}), ...(input.action === "trash" ? { trashed: { at: timestamp, by: input.actor.id, reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } : {}), ...(input.action === "restore" ? { restored: { at: timestamp, by: input.actor.id } } : {}) } });
     transaction.create(operationRef, operation);
     return { operation, duplicate: false };
   });

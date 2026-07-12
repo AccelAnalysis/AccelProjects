@@ -266,6 +266,15 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("recordLifecycleOperations", "forged")), { id: "forged", actorId: "admin" }));
   });
 
+  it("keeps comment creation, editing, redaction history, and deletion server controlled", async () => {
+    const comment = doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1"));
+    await assertFails(setDoc(comment, { id: "comment_1", taskId: "task_assigned", authorId: "contributor", body: "forged", visibility: "internal", createdAt: "forged" }));
+    await testEnv.withSecurityRulesDisabled(async (context) => { await setDoc(doc(context.firestore(), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1")), { id: "comment_1", taskId: "task_assigned", authorId: "contributor", body: "server", visibility: "internal", createdAt: "2026-07-10T00:00:00.000Z" }); });
+    await assertFails(updateDoc(comment, { body: "forged edit", editedBy: "contributor", editedAt: "forged" }));
+    await assertFails(deleteDoc(comment));
+    await assertFails(setDoc(doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1", "moderationHistory", "forged")), { originalBody: "secret" }));
+  });
+
   it("denies unauthorized organization updates and allows supported admin updates", async () => {
     await assertFails(updateDoc(doc(dbFor("owner_pm"), ...orgPath()), { name: "Renamed", updatedAt: "2026-07-10T02:00:00.000Z" }));
     await assertSucceeds(updateDoc(doc(dbFor("admin"), ...orgPath()), { name: "AccelProjects Internal", updatedAt: "2026-07-10T02:00:00.000Z" }));

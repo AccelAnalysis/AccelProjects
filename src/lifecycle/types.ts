@@ -9,7 +9,7 @@ export type LifecycleEntityType =
   | "taskDependency" | "milestone" | "risk" | "document" | "documentVersion" | "metric"
   | "communication" | "deliveryAttempt" | "calendarEvent" | "report" | "reportSnapshot" | "reportArtifact"
   | "activityEvent" | "projectVersion" | "exportSnapshot" | "updateManifest" | "importManifest";
-export type RetentionClass = "operational_30d" | "relationship_30d" | "business_7y" | "audit_permanent" | "legal_hold";
+export type RetentionClass = "operational_temporary" | "ordinary_project" | "project_trash" | "relationship_30d" | "communication_history" | "calendar_history" | "approved_report" | "report_artifact" | "contract_billing" | "audit_permanent" | "legal_hold" | "operational_30d" | "business_7y";
 export type LifecycleOperationStatus = "planned" | "applied" | "failed" | "partially_applied" | "reversed";
 
 export type LifecycleActor = { id: string; role: UserRole };

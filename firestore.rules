@@ -492,9 +492,9 @@ service cloud.firestore {
 
           match /comments/{commentId} {
             allow read: if canReadProject(organizationId, projectId);
-            allow create: if canReadProject(organizationId, projectId) && lifecycleNotCreated();
-            allow update: if canReadProject(organizationId, projectId) && lifecycleUnchanged();
-            allow delete: if false;
+            allow create, update, delete: if false;
+            match /revisions/{revisionId} { allow read, write: if false; }
+            match /moderationHistory/{moderationId} { allow read, write: if false; }
           }
         }
 

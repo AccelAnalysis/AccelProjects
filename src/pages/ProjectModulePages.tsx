@@ -35,13 +35,15 @@ import {
   type ProjectCalendarEventInput,
   type ProjectCommunicationInput
 } from "../data/api";
+import { downloadProjectDocumentVersion, listProjectDocumentVersions, replaceProjectDocumentVersion, uploadProjectDocument } from "../data/api";
+import { supersedeClientProgressReport, voidClientProgressReport, withdrawClientProgressReport } from "../data/api";
 import { buildProjectPath, buildProjectUpdatePath, buildProjectVersionHistoryPath, type ProjectTabId } from "../routing/projectRoutes";
 import type { ClientProgressReport, ClientReportItem, ClientReportSnapshot, NotificationPreferences, ProjectCalendarEvent, ProjectCommunication, ProjectRecipient, Task } from "../types";
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
 import { isLifecycleActive } from "../lifecycle/policy";
-import { LifecycleStatusBadge, RecordActionsMenu } from "../components/lifecycle/LifecycleComponents";
+import { LifecycleReasonField, LifecycleStatusBadge, RecordActionsMenu } from "../components/lifecycle/LifecycleComponents";
 
 function projectSlices(projectState: ProjectPageProps["projectState"], projectId: string) {
   const project = projectState.projects.find((item) => item.id === projectId);
@@ -55,7 +57,7 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     milestones: projectState.milestones.filter((milestone) => milestone.projectId === projectId && isLifecycleActive(milestone)),
     tasks: projectState.tasks.filter((task) => task.projectId === projectId && isLifecycleActive(task)),
     risks: projectState.risks.filter((risk) => risk.projectId === projectId && isLifecycleActive(risk)),
-    documents: projectState.documents.filter((document) => document.projectId === projectId),
+    documents: projectState.documents.filter((document) => document.projectId === projectId && isLifecycleActive(document)),
     metrics: projectState.metrics.filter((metric) => metric.projectId === projectId && isLifecycleActive(metric)),
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
     communications: projectState.projectCommunications.filter((communication) => communication.projectId === projectId),
@@ -534,7 +536,7 @@ function statusTone(status: string) {
   return "info";
 }
 
-export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+export function MessagesPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { project, client, events, tasks, milestones } = projectSlices(projectState, selectedProjectId);
   const [activeTab, setActiveTab] = useState<MessageTab>("all");
   const [communications, setCommunications] = useState<ProjectCommunication[]>(() => projectState.projectCommunications.filter((communication) => communication.projectId === selectedProjectId));
@@ -667,8 +669,8 @@ export function MessagesPage({ projectState, selectedProjectId, clientPreview, c
     }
   }
 
-  const filteredCommunications = activeTab === "all" || activeTab === "email" ? communications : [];
-  const filteredCalendarEvents = activeTab === "all" || activeTab === "calendar" ? calendarEvents : [];
+  const filteredCommunications = activeTab === "all" || activeTab === "email" ? communications.filter(isLifecycleActive) : [];
+  const filteredCalendarEvents = activeTab === "all" || activeTab === "calendar" ? calendarEvents.filter(isLifecycleActive) : [];
   const showActivity = activeTab === "all" || activeTab === "activity";
 
   return (
@@ -716,6 +718,7 @@ export function MessagesPage({ projectState, selectedProjectId, clientPreview, c
                 {communication.status === "unknown" ? <em>Prior send status is unknown. Manual retry may duplicate delivery.</em> : null}
               </div>
               <StatusBadge label={statusLabel(communication.status)} tone={statusTone(communication.status)} />
+              {canManageCommunications && ["draft", "failed"].includes(communication.status) ? <RecordActionsMenu actions={["trash"]} entityId={communication.id} entityType="communication" label={communication.subject} lifecycle={communication.lifecycle} onApplied={onLifecycleApplied} projectId={communication.projectId} projectRevision={project?.revision ?? 1} role={role} /> : null}
             </article>
           ))}
           {filteredCalendarEvents.map((calendarEvent) => (
@@ -738,6 +741,8 @@ export function MessagesPage({ projectState, selectedProjectId, clientPreview, c
                     <button className="secondary-button compact-button" type="button" onClick={() => cancelEvent(calendarEvent)} disabled={working}>Cancel</button>
                   </>
                 ) : null}
+                {canManageCommunications && ["draft", "failed"].includes(calendarEvent.status) ? <RecordActionsMenu actions={["trash"]} entityId={calendarEvent.id} entityType="calendarEvent" label={calendarEvent.title} lifecycle={calendarEvent.lifecycle} onApplied={onLifecycleApplied} projectId={calendarEvent.projectId} projectRevision={project?.revision ?? 1} role={role} /> : null}
+                {canManageCommunications && calendarEvent.status === "canceled" ? <RecordActionsMenu actions={["archive"]} entityId={calendarEvent.id} entityType="calendarEvent" label={calendarEvent.title} lifecycle={calendarEvent.lifecycle} onApplied={onLifecycleApplied} projectId={calendarEvent.projectId} projectRevision={project?.revision ?? 1} role={role} /> : null}
               </div>
             </article>
           ))}
@@ -910,7 +915,7 @@ function reportStatusLabel(status: ClientProgressReport["status"]) {
   return status === "ready_for_review" ? "Ready for review" : status[0].toUpperCase() + status.slice(1);
 }
 
-export function ReportsPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate }: ProjectPageProps) {
+export function ReportsPage({ projectState, selectedProjectId, clientPreview, canViewInternal, canManage, onNavigate, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { project, client, reports, reportSnapshots } = projectSlices(projectState, selectedProjectId);
   const [localReports, setLocalReports] = useState<ClientProgressReport[]>(reports);
   const [localSnapshots, setLocalSnapshots] = useState<ClientReportSnapshot[]>(reportSnapshots);
@@ -922,6 +927,7 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [voidReportId, setVoidReportId] = useState<string | null>(null); const [voidReason, setVoidReason] = useState("");
   const canManageReports = canViewInternal && canManage && !clientPreview;
 
   useEffect(() => {
@@ -1002,6 +1008,9 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
       setWorking(false);
     }
   }
+  async function withdrawReview(report: ClientProgressReport) { setWorking(true); try { const updated = await withdrawClientProgressReport(selectedProjectId, report.id); setLocalReports((current) => current.map((item) => item.id === updated.id ? updated : item)); setNotice("Report withdrawn and returned to draft."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Withdrawal failed."); } finally { setWorking(false); } }
+  async function voidReport() { if (!voidReportId || !voidReason.trim()) return; setWorking(true); try { const updated = await voidClientProgressReport(selectedProjectId, voidReportId, voidReason); setLocalReports((current) => current.map((item) => item.id === updated.id ? updated : item)); setVoidReportId(null); setVoidReason(""); setNotice("Approved report voided. Snapshot, artifact, and delivery history were retained."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Void failed."); } finally { setWorking(false); } }
+  async function supersede(report: ClientProgressReport) { setWorking(true); try { const draft = await supersedeClientProgressReport(selectedProjectId, report.id); setLocalReports((current) => [draft, ...current]); setNotice("Replacement draft created. The original changes to superseded only after replacement approval."); } catch (cause) { setError(cause instanceof Error ? cause.message : "Superseding draft failed."); } finally { setWorking(false); } }
 
   async function downloadPdf(report: ClientProgressReport, snapshotId: string) {
     setWorking(true);
@@ -1121,6 +1130,9 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
                   {canManageReports && report.status !== "approved" ? <button className="secondary-button compact-button" type="button" onClick={() => openDraft(report)} disabled={working}>Edit</button> : null}
                   {canManageReports && report.status === "draft" ? <button className="secondary-button compact-button" type="button" onClick={() => void submitReport(report)} disabled={working}>Submit</button> : null}
                   {canManageReports && report.status === "ready_for_review" ? <button className="secondary-button compact-button" type="button" onClick={() => void approve(report)} disabled={working}>Approve</button> : null}
+                  {canManageReports && report.status === "ready_for_review" ? <button className="secondary-button compact-button" type="button" onClick={() => void withdrawReview(report)} disabled={working}>Withdraw Review</button> : null}
+                  {canManageReports && report.status === "draft" ? <RecordActionsMenu actions={["trash"]} entityId={report.id} entityType="report" label={report.title} lifecycle={report.lifecycle} onApplied={onLifecycleApplied} projectId={report.projectId} projectRevision={currentProject.revision ?? 1} role={role} /> : null}
+                  {canManageReports && report.status === "approved" ? <><button className="secondary-button compact-button" type="button" onClick={() => setVoidReportId(report.id)}>Void</button><button className="secondary-button compact-button" type="button" onClick={() => void supersede(report)}>Supersede</button></> : null}
                   {snapshotId ? (
                     <>
                       <button className="secondary-button compact-button" type="button" onClick={() => void downloadPdf(report, snapshotId)} disabled={working}>PDF</button>
@@ -1140,6 +1152,7 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
           })}
         </div>
       )}
+      {voidReportId ? <dialog className="lifecycle-dialog" open aria-labelledby="void-report-heading"><h2 id="void-report-heading">Void approved report</h2><p>The approved snapshot, PDF artifacts, and sent communication history remain immutable.</p><LifecycleReasonField value={voidReason} onChange={setVoidReason} /><div className="button-row"><button className="secondary-button" type="button" onClick={() => setVoidReportId(null)}>Cancel</button><button className="danger-button" disabled={!voidReason.trim() || working} type="button" onClick={() => void voidReport()}>Confirm void</button></div></dialog> : null}
 
       {draftOpen ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => !working && setDraftOpen(false)}>
@@ -1267,8 +1280,14 @@ export function ClientsPage({ projectState, role, onLifecycleApplied = async () 
   );
 }
 
-export function DocumentsPage({ projectState, selectedProjectId, clientPreview, canEditDocuments }: ProjectPageProps) {
+export function DocumentsPage({ projectState, selectedProjectId, clientPreview, canEditDocuments, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { documents } = projectSlices(projectState, selectedProjectId);
+  const [uploadOpen, setUploadOpen] = useState(false); const [file, setFile] = useState<File | null>(null); const [title, setTitle] = useState(""); const [notice, setNotice] = useState(""); const [error, setError] = useState("");
+  const [versionsByDocument, setVersionsByDocument] = useState<Record<string, Awaited<ReturnType<typeof listProjectDocumentVersions>>["versions"]>>({});
+
+  async function upload() { if (!file) return; setError(""); try { await uploadProjectDocument(selectedProjectId, { title: title || file.name, type: "other", category: "general", visibility: "internal", ownerId: projectState.projects.find((project) => project.id === selectedProjectId)?.ownerId ?? "", file }); setNotice("File uploaded as an immutable first version."); setUploadOpen(false); setFile(null); await onLifecycleApplied(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Upload failed."); } }
+  async function replace(documentId: string, replacement: File) { try { await replaceProjectDocumentVersion(selectedProjectId, documentId, { file: replacement }); setNotice("New immutable file version created."); await onLifecycleApplied(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Replacement failed."); } }
+  async function download(document: (typeof documents)[number]) { if (!document.managed || !document.currentVersionId) { window.open(document.url, "_blank", "noopener,noreferrer"); return; } const result = await downloadProjectDocumentVersion(selectedProjectId, document.id, document.currentVersionId); const url = URL.createObjectURL(result.blob); const link = window.document.createElement("a"); link.href = url; link.download = result.filename; link.click(); URL.revokeObjectURL(url); }
 
   return (
     <section className="panel">
@@ -1278,13 +1297,16 @@ export function DocumentsPage({ projectState, selectedProjectId, clientPreview, 
           <p>Project files, deliverables, reports, and billing documents.</p>
         </div>
         {canEditDocuments && !clientPreview ? (
-          <button className="secondary-button" type="button" disabled title="File upload is not implemented in Phase 1.">
+          <button className="secondary-button" type="button" onClick={() => setUploadOpen((open) => !open)}>
             <Upload size={18} aria-hidden="true" />
             Upload
           </button>
         ) : null}
       </div>
-      <DocumentHub documents={documents} users={projectState.users} />
+      {notice ? <p className="form-success" role="status">{notice}</p> : null}{error ? <p className="form-error" role="alert">{error}</p> : null}
+      {uploadOpen ? <form className="inline-create-form" onSubmit={(event) => { event.preventDefault(); void upload(); }}><input aria-label="Document title" placeholder="Document title" value={title} onChange={(event) => setTitle(event.target.value)} /><input aria-label="File" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><button className="action-button" disabled={!file} type="submit">Upload File</button></form> : null}
+      <DocumentHub documents={documents.filter((document) => !document.managed)} users={projectState.users} />
+      <div className="document-lifecycle-list">{documents.map((document) => <article className="trash-list-row" key={document.id}><div><strong>{document.title}</strong><span>{document.managed ? `${document.originalFilename} · ${document.sizeBytes ?? 0} bytes` : "External link — source remains outside AccelProjects"}</span>{versionsByDocument[document.id] ? <details open><summary>Version history ({versionsByDocument[document.id].length})</summary>{versionsByDocument[document.id].map((version) => <p key={version.id}>{version.originalFilename} · {version.sizeBytes} bytes · {formatDate(version.createdAt)}</p>)}</details> : null}</div><div className="button-row"><button className="secondary-button compact-button" type="button" onClick={() => void download(document)}>{document.managed ? "Download" : "Open External"}</button>{document.managed ? <button className="secondary-button compact-button" type="button" onClick={() => void listProjectDocumentVersions(selectedProjectId, document.id).then((result) => setVersionsByDocument((current) => ({ ...current, [document.id]: result.versions })))}>Versions</button> : null}{document.managed && canEditDocuments ? <label className="secondary-button compact-button">Replace<input hidden type="file" onChange={(event) => { const replacement = event.target.files?.[0]; if (replacement) void replace(document.id, replacement); }} /></label> : null}{canEditDocuments ? <RecordActionsMenu actions={["archive", "trash"]} entityId={document.id} entityType="document" label={document.title} lifecycle={document.lifecycle} onApplied={onLifecycleApplied} projectId={document.projectId} projectRevision={projectState.projects.find((project) => project.id === document.projectId)?.revision ?? 1} role={role} /> : null}</div></article>)}</div>
     </section>
   );
 }

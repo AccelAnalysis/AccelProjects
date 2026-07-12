@@ -80,7 +80,6 @@ import {
 } from "./auth/permissions";
 import { demoRoles, initialProjectState } from "./data/projectMockData";
 import {
-  addTaskCommentInFirestore,
   addProjectMemberInFirestore,
   batchUpdateTaskSchedulesInFirestore,
   createMilestoneInFirestore,
@@ -102,7 +101,7 @@ import {
   updateTaskDependencyInFirestore,
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
-import { applyRecordLifecycle, previewRecordLifecycle } from "./data/api";
+import { applyRecordLifecycle, createTaskComment, editTaskComment, previewRecordLifecycle, redactTaskComment } from "./data/api";
 import {
   createCanonicalProjectExport,
   createProjectExportSnapshotId,
@@ -1213,11 +1212,7 @@ function AppShell() {
     }
 
     try {
-      await addTaskCommentInFirestore(taskId, {
-        authorId: userProfile?.id ?? user.uid,
-        body,
-        visibility: "internal"
-      });
+      await createTaskComment(task.projectId, taskId, body, "internal");
 
       if (user) {
         syncProjectState(await loadProjectStateFromFirestore(user));
@@ -1227,6 +1222,9 @@ function AppShell() {
       setProjectError(getFirestorePermissionMessage(error));
     }
   }
+
+  async function editComment(taskId: string, commentId: string, body: string) { const task = projectState.tasks.find((item) => item.id === taskId); if (!task || !user) return; try { await editTaskComment(task.projectId, taskId, commentId, body); syncProjectState(await loadProjectStateFromFirestore(user)); setProjectNotice("Comment edited and prior revision retained."); } catch (error) { setProjectError(getFirestorePermissionMessage(error)); } }
+  async function redactComment(taskId: string, commentId: string, reason: string) { const task = projectState.tasks.find((item) => item.id === taskId); if (!task || !user || !manageable) return; try { await redactTaskComment(task.projectId, taskId, commentId, reason); syncProjectState(await loadProjectStateFromFirestore(user)); setProjectNotice("Comment redacted; restricted moderation history retained."); } catch (error) { setProjectError(getFirestorePermissionMessage(error)); } }
 
   async function addRisk(risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) {
     if (!selectedProject) {
@@ -1621,6 +1619,10 @@ function AppShell() {
           onClose={() => setSelectedTaskId(undefined)}
           onUpdateTask={updateTask}
           onAddComment={addTaskComment}
+          currentUserId={userProfile?.id ?? user.uid}
+          canModerateComments={manageable}
+          onEditComment={(commentId, body) => void editComment(selectedTask.id, commentId, body)}
+          onRedactComment={(commentId, reason) => void redactComment(selectedTask.id, commentId, reason)}
           lifecycleActions={canEditCurrentTask(selectedTask) && selectedProject ? <RecordActionsMenu actions={["trash"]} entityId={selectedTask.id} entityType="task" label={selectedTask.title} lifecycle={selectedTask.lifecycle} onApplied={reloadAfterLifecycleAction} projectId={selectedTask.projectId} projectRevision={selectedProject.revision ?? 1} role={role} /> : null}
         />
       ) : null}

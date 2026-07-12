@@ -239,6 +239,8 @@ export function toPortalReportDto(snapshot, publication, portalProject) {
     approvedAt: snapshot.approvedAt,
     publishedAt: publication.publishedAt,
     pdfAvailable: true
+    ,sourceReportStatus: publication.sourceReportStatus || "approved"
+    ,supersededByReportId: publication.supersededByReportId || null
   };
 }
 
@@ -261,6 +263,8 @@ export function toPortalSnapshotDto(snapshot, publication, portalProject) {
     reportingPeriodEnd: snapshot.reportingPeriodEnd,
     approvedAt: snapshot.approvedAt,
     publishedAt: publication.publishedAt,
+    sourceReportStatus: publication.sourceReportStatus || "approved",
+    supersededByReportId: publication.supersededByReportId || null,
     sections: {
       executiveSummary: snapshot.sections?.executiveSummary || "",
       progressSummary: snapshot.sections?.progressSummary || "",

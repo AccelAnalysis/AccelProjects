@@ -2,6 +2,7 @@
 
 Record lifecycle architecture, API contracts, schema evolution, security notes, and deployment limitations are documented in [`docs/record-lifecycle.md`](docs/record-lifecycle.md).
 Operational lifecycle UI and entity behavior are documented in [`docs/record-lifecycle-run-2.md`](docs/record-lifecycle-run-2.md).
+Retention-sensitive records, managed file storage, legal hold, purge jobs, and erasure semantics are documented in [`docs/record-lifecycle-run-3.md`](docs/record-lifecycle-run-3.md).
 
 AccelProjects is a Firebase-backed internal project-management workspace. The original Mini Billing Messenger billing module remains in the repository, but the primary application surface is now AccelProjects project tracking, imports, exports, update-via-file, revisions, scheduling, risks, and account settings.
 

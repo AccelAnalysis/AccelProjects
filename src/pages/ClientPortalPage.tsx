@@ -200,6 +200,7 @@ function PortalReportList({
         >
           <span>
             <strong>{report.title}</strong>
+            {report.sourceReportStatus && report.sourceReportStatus !== "approved" ? <em>{report.sourceReportStatus === "voided" ? "This report was later voided" : "A newer approved report supersedes this report"}</em> : null}
             <small>{formatDateOnly(report.reportingPeriodStart)} to {formatDateOnly(report.reportingPeriodEnd)}</small>
           </span>
           <small>Published {formatDateOnly(report.publishedAt)}</small>
@@ -410,6 +411,7 @@ export function ClientPortalPage({
                   <div>
                     <p>{formatDateOnly(selectedReport.reportingPeriodStart)} to {formatDateOnly(selectedReport.reportingPeriodEnd)}</p>
                     <h2>{selectedReport.title}</h2>
+                    {selectedReport.sourceReportStatus && selectedReport.sourceReportStatus !== "approved" ? <p className="form-error" role="status">{selectedReport.sourceReportStatus === "voided" ? "This approved report was later voided. The historical snapshot remains available." : "This report has been superseded by a newer approved report."}</p> : null}
                   </div>
                   <button className="action-button" type="button" onClick={() => void downloadReport(selectedProject.projectId, selectedReport.portalReportId)}>
                     <Download size={16} aria-hidden="true" />

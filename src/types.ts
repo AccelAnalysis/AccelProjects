@@ -215,6 +215,15 @@ export type TaskComment = {
   visibility: "internal" | "client";
   createdAt: string;
   lifecycle?: RecordLifecycleMetadata;
+  editedAt?: string;
+  editedBy?: string;
+  revision?: number;
+  moderation?: {
+    state: "visible" | "removed_by_author" | "redacted_by_manager";
+    at: string;
+    by: string;
+    reason?: string;
+  };
 };
 
 export type TaskDependency = {
@@ -254,6 +263,34 @@ export type ProjectDocument = {
   ownerId: string;
   createdAt: string;
   lifecycle?: RecordLifecycleMetadata;
+  category?: "general" | "contract" | "billing" | "approved_deliverable" | "report_artifact";
+  currentVersionId?: string | null;
+  visibility?: "internal" | "client_visible";
+  storageProvider?: "firebase_storage" | "external";
+  managed?: boolean;
+  contentType?: string;
+  originalFilename?: string;
+  sizeBytes?: number;
+  checksumSha256?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  retentionClass?: import("./lifecycle/types").RetentionClass;
+  locked?: boolean;
+};
+
+export type ProjectDocumentVersion = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  documentId: string;
+  storagePath: string;
+  contentType: string;
+  originalFilename: string;
+  sanitizedFilename: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  createdAt: string;
+  createdBy: string;
 };
 
 export type ProjectMetric = {
@@ -293,6 +330,7 @@ export type ProjectCommunication = {
   audience: "client" | "internal" | "mixed";
   visibility: "internal" | "client_visible";
   status: ProjectCommunicationStatus;
+  lifecycle?: RecordLifecycleMetadata;
   subject: string;
   bodyText: string;
   toRecipients: ProjectRecipient[];
@@ -344,6 +382,7 @@ export type ProjectCalendarEvent = {
   descriptionText: string;
   visibility: "internal" | "client_visible";
   status: ProjectCalendarEventStatus;
+  lifecycle?: RecordLifecycleMetadata;
   calendarOwnerEmail: string;
   startDateTime: string;
   endDateTime: string;
@@ -368,7 +407,7 @@ export type ProjectCalendarEvent = {
   lastErrorMessage: string | null;
 };
 
-export type ClientReportStatus = "draft" | "ready_for_review" | "approved";
+export type ClientReportStatus = "draft" | "ready_for_review" | "approved" | "voided" | "superseded";
 
 export type ClientReportItem = {
   id: string;
@@ -406,6 +445,14 @@ export type ClientProgressReport = {
   submittedBy: string | null;
   approvedAt: string | null;
   approvedBy: string | null;
+  lifecycle?: RecordLifecycleMetadata;
+  voidedAt?: string | null;
+  voidedBy?: string | null;
+  voidReason?: string | null;
+  supersedesReportId?: string | null;
+  supersedesSnapshotId?: string | null;
+  supersededByReportId?: string | null;
+  supersededBySnapshotId?: string | null;
 };
 
 export type ClientReportSnapshot = {
@@ -557,6 +604,8 @@ export type PortalReportSummary = {
   approvedAt: string;
   publishedAt: string;
   pdfAvailable: boolean;
+  sourceReportStatus?: "approved" | "voided" | "superseded";
+  supersededByReportId?: string | null;
 };
 
 export type PortalReportItem = Omit<ClientReportItem, "id">;

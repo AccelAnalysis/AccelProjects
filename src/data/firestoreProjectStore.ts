@@ -1072,26 +1072,6 @@ export async function applyProjectUpdateFromExportInFirestore(plan: ProjectUpdat
   });
 }
 
-export async function addTaskCommentInFirestore(taskId: string, comment: Omit<TaskComment, "id" | "taskId" | "createdAt">) {
-  const safeTaskId = requirePathSegment(taskId, "taskId");
-  const state = await loadProjectStateForCurrentUser();
-  const task = state.tasks.find((item) => item.id === safeTaskId);
-
-  if (!task) {
-    throw new Error(`Task ${safeTaskId} was not found in Firestore.`);
-  }
-
-  const newComment: TaskComment = {
-    ...comment,
-    id: createId("comment"),
-    taskId: safeTaskId,
-    createdAt: new Date().toISOString()
-  };
-
-  await writeDocument([...projectPath(task.projectId), projectCollectionMap.tasks, safeTaskId, "comments"], newComment);
-  return newComment;
-}
-
 export async function createRiskInFirestore(risk: Omit<ProjectRisk, "id">) {
   const newRisk: ProjectRisk = {
     ...risk,

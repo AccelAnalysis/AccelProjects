@@ -117,6 +117,11 @@ describe("project update provenance and planning", () => {
     ]));
   });
 
+  it("blocks direct lifecycle and legal-hold forgery in update packages", async () => {
+    const plan = await planFor((pkg) => { pkg.tasks[0].lifecycle = { schemaVersion: 1, state: "active", retentionClass: "legal_hold", legalHold: false, lastOperationId: "forged" }; });
+    expect(plan.validationIssues.map((issue) => issue.code)).toContain("immutable_field_changed");
+  });
+
   it("blocks implicit omission instead of deleting commented tasks", async () => {
     const commentedTaskId = initialProjectState.taskComments[0].taskId;
     const plan = await planFor((pkg) => {

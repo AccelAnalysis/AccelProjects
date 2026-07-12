@@ -3,7 +3,6 @@ import { useAuth } from "../auth/AuthProvider";
 import { canUseAdminPreview, getUserRole } from "../auth/permissions";
 import { auth, db, isFirebaseConfigured } from "../firebase";
 import {
-  addTaskCommentInFirestore,
   createRiskInFirestore,
   createTaskInFirestore,
   ensureFirestoreUserProfile,
@@ -15,6 +14,7 @@ import {
   updateRiskInFirestore,
   updateTaskInFirestore
 } from "../data/firestoreProjectStore";
+import { createTaskComment } from "../data/api";
 import { checkProjectImportDuplicate, importProjectPackageToFirestore } from "../data/firestoreProjectImportStore";
 import { initialProjectState } from "../data/projectMockData";
 import { createProjectImportPlan, createProjectImportSourceHash } from "../imports/projectImportPlanner";
@@ -227,11 +227,7 @@ export function SystemTestsPage() {
           </button>
           <button type="button" onClick={() => runFirebaseTest(async () => {
             const task = await getOrCreateFirestoreTestTask();
-            const comment = await addTaskCommentInFirestore(task.id, {
-              authorId: "user_sarah",
-              body: "System test comment added through Firestore.",
-              visibility: "internal"
-            });
+            const comment = await createTaskComment(task.projectId, task.id, "System test comment added through controlled API.", "internal");
 
             if (user) {
               setFirestoreState(await loadProjectStateFromFirestore(user));

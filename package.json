@@ -10,8 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run src server",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run firestore.rules.test.ts\"",
+    "test:storage-rules": "firebase emulators:exec --only storage \"vitest run storage.rules.test.ts\"",
     "check:committed-files": "node scripts/check-committed-files.mjs",
     "build": "vite build",
+    "lifecycle:diagnostics": "node scripts/lifecycle-diagnostics.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
