@@ -510,6 +510,14 @@ export function PlanWorkspace({
 
   const headers = generateTimelineHeaderTicks(range, scale);
   const rowCount = rowModel.length;
+  const gridStops = headers
+    .filter((tick) => tick.level === "minor")
+    .map((tick) => `#edf2f7 ${Math.round(tick.positionPx)}px, transparent ${Math.round(tick.positionPx + 1)}px`)
+    .join(", ");
+  const timelineGridStyle = {
+    height: rowCount * rowHeight,
+    "--timeline-grid-lines": gridStops ? `linear-gradient(to right, ${gridStops})` : "none"
+  } as CSSProperties;
   const selectedMilestone = selectedMilestoneId ? milestones.find((milestone) => milestone.id === selectedMilestoneId) : undefined;
   const completedTaskCount = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completedTaskCount / tasks.length) * 100) : 0;
@@ -646,8 +654,13 @@ export function PlanWorkspace({
           </div>
           <div className="plan-timeline-header" ref={timelineRef}>
             {headers.map((tick) => (
-              <span className={`plan-header-tick ${tick.level}`} key={`${tick.level}-${tick.date}`} style={{ left: tick.positionPx }}>
-                {tick.label}
+              <span
+                className={`plan-header-tick ${tick.level}${tick.visible ? "" : " unlabeled"}`}
+                key={`${tick.level}-${tick.date}`}
+                style={{ left: tick.positionPx, width: tick.widthPx }}
+                aria-hidden={!tick.visible}
+              >
+                {tick.visible ? tick.label : ""}
               </span>
             ))}
             {todayVisible ? <span className="plan-today-line header" style={{ left: dateToX(today, range, scale) }}>Today</span> : null}
@@ -667,7 +680,7 @@ export function PlanWorkspace({
               />
             ))}
           </div>
-          <div className="plan-timeline-body" style={{ height: rowCount * rowHeight }}>
+          <div className="plan-timeline-body" style={timelineGridStyle}>
             {todayVisible ? <span className="plan-today-line body" style={{ left: dateToX(today, range, scale), height: rowCount * rowHeight }} /> : null}
             <DependencyLayer rows={rowModel} dependencies={visibleDependencies} range={range} scale={scale} />
             {rowModel.map((row, index) => (
@@ -1223,11 +1236,11 @@ function HierarchyRow({
       ) : null}
       {row.type === "milestone" ? (
         <>
-          <Diamond size={16} aria-hidden="true" />
-          <span className="plan-row-title">{row.milestone.name}</span>
-          <span>Milestone</span>
-          <span>{formatDateOnly(row.milestone.date)}</span>
-          <span>{row.milestone.status.replace("_", " ")}</span>
+          <Diamond className="plan-row-type-icon" size={16} aria-hidden="true" />
+          <span className="plan-row-title milestone-title" title={row.milestone.name}>{row.milestone.name}</span>
+          <span className="milestone-type-cell">Milestone</span>
+          <span className="milestone-date-cell">{formatDateOnly(row.milestone.date)}</span>
+          <span className="milestone-status-cell" title={titleCase(row.milestone.status)}>{row.milestone.status.replace("_", " ")}</span>
         </>
       ) : null}
       {row.type === "empty" ? <span>{row.label}</span> : null}
