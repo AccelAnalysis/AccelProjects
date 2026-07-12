@@ -4373,3 +4373,36 @@ summary:focus-visible {
     width: min(560px, 100vw);
   }
 }
+/* Shared record lifecycle controls */
+.record-actions-menu { position: relative; display: inline-block; }
+.record-actions-menu summary { align-items: center; border: 1px solid #dbe3ee; border-radius: 8px; cursor: pointer; display: flex; justify-content: center; min-height: 36px; min-width: 36px; }
+.record-actions-menu summary::marker { display: none; }
+.record-actions-menu > div { background: #fff; border: 1px solid #dbe3ee; border-radius: 10px; box-shadow: 0 12px 30px rgb(15 23 42 / 16%); display: grid; min-width: 150px; padding: 6px; position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; }
+.record-actions-menu button { align-items: center; background: transparent; border: 0; border-radius: 7px; display: flex; gap: 8px; padding: 9px 10px; text-align: left; text-transform: capitalize; }
+.record-actions-menu button:hover, .record-actions-menu button:focus-visible { background: #f3f6fa; }
+.lifecycle-dialog { border: 0; border-radius: 16px; box-shadow: 0 22px 70px rgb(15 23 42 / 28%); max-height: min(88vh, 760px); max-width: min(680px, calc(100vw - 32px)); overflow: auto; padding: 24px; width: 100%; }
+.lifecycle-dialog::backdrop { background: rgb(15 23 42 / 54%); }
+.lifecycle-dialog-header, .lifecycle-settings-row, .trash-list-row { align-items: flex-start; display: flex; gap: 16px; justify-content: space-between; }
+.lifecycle-dialog-header h2 { margin: 0; text-transform: capitalize; }
+.lifecycle-field { display: grid; gap: 7px; margin: 18px 0; }
+.lifecycle-field textarea { min-height: 88px; resize: vertical; }
+.lifecycle-impact { background: #f3f6fa; border-radius: 12px; display: grid; gap: 10px; margin-top: 18px; padding: 16px; }
+.lifecycle-impact h3 { font-size: .92rem; margin: 0 0 4px; }
+.lifecycle-impact ul { margin: 0; padding-left: 20px; }
+.lifecycle-notice { color: var(--text-muted); font-size: .86rem; margin: 6px 0; }
+.lifecycle-notice.danger { color: #b42318; }
+.lifecycle-dialog-actions { justify-content: flex-end; margin-top: 20px; }
+.danger-button { background: #b42318; border: 0; border-radius: 9px; color: white; font-weight: 700; padding: 10px 15px; }
+.lifecycle-strategy { border: 1px solid #dbe3ee; border-radius: 10px; display: grid; gap: 8px; margin: 14px 0; padding: 12px; }
+.lifecycle-strategy label { align-items: center; display: flex; gap: 8px; }
+.lifecycle-badge { border-radius: 999px; display: inline-flex; font-size: .72rem; font-weight: 800; padding: 4px 8px; text-transform: uppercase; }
+.lifecycle-active { background: #dcfce7; color: #166534; }.lifecycle-archived { background: #e2e8f0; color: #334155; }.lifecycle-trashed { background: #fee2e2; color: #991b1b; }.lifecycle-removed { background: #fef3c7; color: #92400e; }
+.lifecycle-settings { align-items: center; border: 1px solid #dbe3ee; border-radius: 12px; display: flex; justify-content: space-between; margin-top: 20px; padding: 18px; }
+.lifecycle-filters { display: grid; gap: 12px; grid-template-columns: 2fr repeat(3, 1fr); margin-bottom: 18px; }
+.lifecycle-filters label { display: grid; gap: 6px; }
+.trash-list { display: grid; gap: 10px; }
+.trash-list-row { border: 1px solid #dbe3ee; border-radius: 12px; padding: 15px; }
+.trash-list-row > div { display: grid; gap: 5px; }
+.metric-lifecycle-card { position: relative; }.metric-lifecycle-card > .record-actions-menu { position: absolute; right: 12px; top: 12px; }.metric-source { color: var(--text-muted); font-size: .75rem; margin: 6px 12px; text-transform: capitalize; }
+.inline-actions { align-items: center; display: flex; gap: 8px; }
+@media (max-width: 720px) { .lifecycle-filters { grid-template-columns: 1fr; }.lifecycle-settings, .trash-list-row { align-items: stretch; flex-direction: column; }.lifecycle-dialog { max-width: calc(100vw - 16px); padding: 18px; }.record-actions-menu > div { left: auto; right: 0; } }

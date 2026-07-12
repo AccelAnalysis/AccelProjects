@@ -40,6 +40,8 @@ import type { ClientProgressReport, ClientReportItem, ClientReportSnapshot, Noti
 import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
+import { isLifecycleActive } from "../lifecycle/policy";
+import { LifecycleStatusBadge, RecordActionsMenu } from "../components/lifecycle/LifecycleComponents";
 
 function projectSlices(projectState: ProjectPageProps["projectState"], projectId: string) {
   const project = projectState.projects.find((item) => item.id === projectId);
@@ -48,13 +50,13 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     project,
     client: projectState.clients.find((client) => client.id === project?.clientId),
     owner: projectState.users.find((user) => user.id === project?.ownerId),
-    members: projectState.projectMembers.filter((member) => member.projectId === projectId),
-    phases: sortPhases(projectState.phases.filter((phase) => phase.projectId === projectId)),
-    milestones: projectState.milestones.filter((milestone) => milestone.projectId === projectId),
-    tasks: projectState.tasks.filter((task) => task.projectId === projectId),
-    risks: projectState.risks.filter((risk) => risk.projectId === projectId),
+    members: projectState.projectMembers.filter((member) => member.projectId === projectId && isLifecycleActive(member)),
+    phases: sortPhases(projectState.phases.filter((phase) => phase.projectId === projectId && isLifecycleActive(phase))),
+    milestones: projectState.milestones.filter((milestone) => milestone.projectId === projectId && isLifecycleActive(milestone)),
+    tasks: projectState.tasks.filter((task) => task.projectId === projectId && isLifecycleActive(task)),
+    risks: projectState.risks.filter((risk) => risk.projectId === projectId && isLifecycleActive(risk)),
     documents: projectState.documents.filter((document) => document.projectId === projectId),
-    metrics: projectState.metrics.filter((metric) => metric.projectId === projectId),
+    metrics: projectState.metrics.filter((metric) => metric.projectId === projectId && isLifecycleActive(metric)),
     events: projectState.activityEvents.filter((event) => event.projectId === projectId),
     communications: projectState.projectCommunications.filter((communication) => communication.projectId === projectId),
     calendarEvents: projectState.projectCalendarEvents.filter((event) => event.projectId === projectId),
@@ -62,7 +64,7 @@ function projectSlices(projectState: ProjectPageProps["projectState"], projectId
     reportSnapshots: projectState.clientReportSnapshots.filter((snapshot) => snapshot.projectId === projectId),
     reportArtifacts: projectState.clientReportArtifacts.filter((artifact) => artifact.projectId === projectId),
     versions: projectState.projectVersions.filter((version) => version.projectId === projectId),
-    dependencies: projectState.taskDependencies.filter((dependency) => (
+    dependencies: projectState.taskDependencies.filter((dependency) => isLifecycleActive(dependency) && (
       projectState.tasks.some((task) => task.projectId === projectId && task.id === dependency.taskId)
     ))
   };
@@ -83,6 +85,7 @@ function projectStats(tasks: Task[]) {
 }
 
 export function ProjectsPage({ projectState, selectedProjectId, canManage, canViewInternal, onNavigate }: ProjectPageProps) {
+  const activeProjects = projectState.projects.filter(isLifecycleActive);
   return (
     <div className="page-stack">
       <section className="panel">
@@ -106,7 +109,7 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
             ) : null}
           </div>
         </div>
-        {projectState.projects.length === 0 ? (
+        {activeProjects.length === 0 ? (
           <div className="empty-state portfolio-empty">
             <h2>No projects yet</h2>
             <p>Import a project package to create the first project workspace.</p>
@@ -120,15 +123,15 @@ export function ProjectsPage({ projectState, selectedProjectId, canManage, canVi
         ) : (
           <>
           <ProjectPortfolioTimeline
-            projectState={projectState}
+            projectState={{ ...projectState, projects: activeProjects }}
             selectedProjectId={selectedProjectId}
             onNavigate={onNavigate}
           />
           <div className="project-list portfolio-list">
-            {projectState.projects.map((project) => {
+            {activeProjects.map((project) => {
               const client = projectState.clients.find((item) => item.id === project.clientId);
               const owner = projectState.users.find((item) => item.id === project.ownerId);
-              const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+              const tasks = projectState.tasks.filter((task) => task.projectId === project.id && isLifecycleActive(task));
               const stats = projectStats(tasks);
               const selected = project.id === selectedProjectId;
 
@@ -214,7 +217,7 @@ function ProjectPortfolioTimeline({
         {scheduledProjects.map((project) => {
           const client = projectState.clients.find((item) => item.id === project.clientId);
           const owner = projectState.users.find((item) => item.id === project.ownerId);
-          const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+          const tasks = projectState.tasks.filter((task) => task.projectId === project.id && isLifecycleActive(task));
           const stats = projectStats(tasks);
           const offset = Math.max(0, daysBetween(startDate, project.startDate));
           const duration = Math.max(1, daysBetween(project.startDate, project.targetDate));
@@ -369,7 +372,7 @@ export function OverviewPage({ projectState, selectedProjectId, onNavigate }: Pr
   );
 }
 
-export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTask, onOpenTask, onUpdateTask }: ProjectPageProps) {
+export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTask, onOpenTask, onUpdateTask, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { phases, tasks } = projectSlices(projectState, selectedProjectId);
   const [statusFilter, setStatusFilter] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -464,15 +467,16 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
         canEditTask={canEditTask}
         onOpenTask={onOpenTask}
         onUpdateTask={onUpdateTask}
+        renderLifecycleActions={canEdit ? (task) => <RecordActionsMenu actions={["trash"]} entityId={task.id} entityType="task" label={task.title} lifecycle={task.lifecycle} onApplied={onLifecycleApplied} projectId={task.projectId} projectRevision={projectState.projects.find((project) => project.id === task.projectId)?.revision ?? 1} role={role} /> : undefined}
       />
     </section>
   );
 }
 
-export function RisksPage({ projectState, selectedProjectId, canManageRisks, onAddRisk, onUpdateRisk }: ProjectPageProps) {
+export function RisksPage({ projectState, selectedProjectId, canManageRisks, onAddRisk, onUpdateRisk, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { risks } = projectSlices(projectState, selectedProjectId);
 
-  return <RiskRegister risks={risks} canManage={canManageRisks} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} />;
+  return <RiskRegister risks={risks} canManage={canManageRisks} onAddRisk={onAddRisk} onUpdateRisk={onUpdateRisk} renderLifecycleActions={canManageRisks ? (risk) => <RecordActionsMenu actions={["archive", "trash"]} entityId={risk.id} entityType="risk" label={risk.title} lifecycle={risk.lifecycle} onApplied={onLifecycleApplied} projectId={risk.projectId} projectRevision={projectState.projects.find((project) => project.id === risk.projectId)?.revision ?? 1} role={role} /> : undefined} />;
 }
 
 type MessageTab = "all" | "email" | "calendar" | "activity";
@@ -1221,7 +1225,9 @@ export function ReportPrintPage({ projectState, selectedProjectId, reportId, sna
   );
 }
 
-export function ClientsPage({ projectState }: ProjectPageProps) {
+export function ClientsPage({ projectState, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
+  const [showArchived, setShowArchived] = useState(false);
+  const clients = projectState.clients.filter((client) => client.lifecycle?.state !== "trashed" && (showArchived || isLifecycleActive(client)));
   return (
     <section className="panel">
       <div className="panel-header">
@@ -1230,6 +1236,7 @@ export function ClientsPage({ projectState }: ProjectPageProps) {
           <p>Client relationships, contacts, active projects, and recent activity.</p>
         </div>
       </div>
+      <label className="compact-field"><input checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} type="checkbox" /> Include archived clients</label>
       <div className="table-wrap">
         <table>
           <thead>
@@ -1239,16 +1246,18 @@ export function ClientsPage({ projectState }: ProjectPageProps) {
               <th>Primary Contact</th>
               <th>Email</th>
               <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {projectState.clients.map((client) => (
+            {clients.map((client) => (
               <tr key={client.id}>
                 <td><strong>{client.name}</strong></td>
                 <td>{projectState.projects.filter((project) => project.clientId === client.id).length}</td>
                 <td>{client.contactName}</td>
                 <td>{client.email}</td>
                 <td><StatusBadge label={client.status} tone={client.status === "active" ? "success" : "info"} /></td>
+                <td>{role === "admin" ? <RecordActionsMenu actions={client.lifecycle?.state === "archived" ? ["restore", "trash"] : ["archive", "trash"]} entityId={client.id} entityType="client" label={client.name} lifecycle={client.lifecycle} onApplied={onLifecycleApplied} projectId="" projectRevision={0} role={role} /> : null}</td>
               </tr>
             ))}
           </tbody>
@@ -1280,7 +1289,7 @@ export function DocumentsPage({ projectState, selectedProjectId, clientPreview, 
   );
 }
 
-export function MetricsPage({ projectState, selectedProjectId, canViewInternal }: ProjectPageProps) {
+export function MetricsPage({ projectState, selectedProjectId, canViewInternal, canEditMetrics, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { metrics } = projectSlices(projectState, selectedProjectId);
 
   if (!canViewInternal) {
@@ -1307,16 +1316,19 @@ export function MetricsPage({ projectState, selectedProjectId, canViewInternal }
       <div className="page-grid two">
         {metrics.length === 0 ? <div className="table-empty">No project metrics are available yet.</div> : null}
         {metrics.map((metric) => (
-          <MetricCard metric={metric} key={metric.id} />
+          <div className="metric-lifecycle-card" key={metric.id}><MetricCard metric={metric} /><div className="metric-source">{metric.source ?? "manual"} metric</div>{canEditMetrics && (metric.source ?? "manual") !== "computed" ? <RecordActionsMenu actions={["archive", "trash"]} entityId={metric.id} entityType="metric" label={metric.label} lifecycle={metric.lifecycle} onApplied={onLifecycleApplied} projectId={metric.projectId} projectRevision={projectState.projects.find((project) => project.id === metric.projectId)?.revision ?? 1} role={role} /> : <span className="panel-note">Computed metrics are hidden or disabled, not deleted.</span>}</div>
         ))}
       </div>
     </section>
   );
 }
 
-export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) {
-  const { members, tasks } = projectSlices(projectState, selectedProjectId);
+export function TeamPage({ projectState, selectedProjectId, canManage, role, onLifecycleApplied = async () => undefined, onAddProjectMember = async () => undefined, onChangeProjectMemberRole = async () => undefined }: ProjectPageProps) {
+  const { members, tasks, project } = projectSlices(projectState, selectedProjectId);
   const today = todayDateOnly();
+  const [newMemberId, setNewMemberId] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState<"sponsor" | "lead" | "contributor" | "observer">("contributor");
+  const availableUsers = projectState.users.filter((user) => user.role !== "client" && !members.some((member) => member.userId === user.id));
 
   return (
     <section className="panel">
@@ -1326,6 +1338,7 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
           <p>Project access, roles, and task assignment context.</p>
         </div>
       </div>
+      {canManage ? <form className="inline-create-form" onSubmit={(event) => { event.preventDefault(); if (newMemberId) void onAddProjectMember(newMemberId, newMemberRole).then(() => setNewMemberId("")); }}><select aria-label="Organization user" value={newMemberId} onChange={(event) => setNewMemberId(event.target.value)}><option value="">Select organization user</option>{availableUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}</select><select aria-label="Project role" value={newMemberRole} onChange={(event) => setNewMemberRole(event.target.value as typeof newMemberRole)}>{["sponsor", "lead", "contributor", "observer"].map((value) => <option key={value}>{value}</option>)}</select><button className="action-button" disabled={!newMemberId} type="submit">Add Project Member</button></form> : null}
       <div className="table-wrap">
         <table>
           <thead>
@@ -1336,6 +1349,7 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
               <th>Assigned Tasks</th>
               <th>Open Tasks</th>
               <th>Overdue Tasks</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1349,10 +1363,11 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
                 <tr key={member.id}>
                   <td><strong>{user?.name ?? member.userId}</strong><span>{user?.email}</span></td>
                   <td>{user?.role.replace("_", " ") ?? "Unknown"}</td>
-                  <td>{member.role}</td>
+                  <td>{canManage ? <select aria-label={`Project role for ${user?.name ?? member.userId}`} value={member.role} onChange={(event) => void onChangeProjectMemberRole(member.userId, event.target.value as typeof member.role)}>{["sponsor", "lead", "contributor", "observer"].map((value) => <option key={value}>{value}</option>)}</select> : member.role}</td>
                   <td>{assigned.length}</td>
                   <td>{open.length}</td>
                   <td>{overdue.length}</td>
+                  <td>{canManage && project ? <RecordActionsMenu actions={["remove"]} entityId={member.userId} entityType="projectMember" label={user?.name ?? member.userId} lifecycle={member.lifecycle} onApplied={onLifecycleApplied} projectId={project.id} projectRevision={project.revision ?? 1} role={role} /> : null}</td>
                 </tr>
               );
             })}
@@ -1363,7 +1378,7 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
   );
 }
 
-export function ProjectSettingsPage({ projectState, selectedProjectId, canManage, canViewInternal, onExportProject, onNavigate }: ProjectPageProps) {
+export function ProjectSettingsPage({ projectState, selectedProjectId, canManage, canViewInternal, onExportProject, onNavigate, role, onLifecycleApplied = async () => undefined }: ProjectPageProps) {
   const { project, client, owner } = projectSlices(projectState, selectedProjectId);
   const [portalNotice, setPortalNotice] = useState("");
   const [portalError, setPortalError] = useState("");
@@ -1465,6 +1480,7 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
         ))}
       </div>
       <p className="panel-note">Update via File applies a verified export back to this existing project. Portfolio Import New Project still creates a separate project.</p>
+      {canManage && canViewInternal ? <section className="settings-form lifecycle-settings" aria-labelledby="project-lifecycle-heading"><div><h2 id="project-lifecycle-heading">Project lifecycle</h2><p>Archive completed work or move accidental projects to Trash. An impact preview is always required.</p></div><div className="lifecycle-settings-row"><LifecycleStatusBadge lifecycle={currentProject.lifecycle} /><RecordActionsMenu actions={["archive", "trash"]} entityId={currentProject.id} entityType="project" label={currentProject.name} lifecycle={currentProject.lifecycle} onApplied={onLifecycleApplied} projectId={currentProject.id} projectRevision={currentProject.revision ?? 1} role={role} /></div></section> : null}
       {canManage && canViewInternal ? (
         <section className="settings-form portal-publication-panel" aria-labelledby="portal-publication-heading">
           <div className="panel-header">

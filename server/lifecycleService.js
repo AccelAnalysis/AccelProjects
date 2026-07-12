@@ -34,7 +34,7 @@ function targetRef(db, projectId, entityType, entityId) {
   return definition.collection ? project.collection(definition.collection).doc(entityId) : project;
 }
 
-async function buildImpact(db, projectId, entityType, entityId) {
+async function buildImpact(db, projectId, entityType, entityId, { action, strategy, destinationPhaseId, replacementUserId } = {}) {
   const project = db.doc(`organizations/${API_ORGANIZATION_ID}/projects/${projectId}`);
   const transition = [], removeRelationships = [], retainImmutable = [], blockers = [], warnings = [];
   if (entityType === "project") {
@@ -47,7 +47,13 @@ async function buildImpact(db, projectId, entityType, entityId) {
   } else if (entityType === "phase") {
     const tasks = await project.collection("tasks").where("phaseId", "==", entityId).get();
     transition.push(item("task", tasks.docs.map((doc) => doc.id)));
-    if (!tasks.empty) blockers.push("phase_contains_tasks");
+    if (!tasks.empty && !["cascade_trash", "reassign"].includes(strategy)) blockers.push("phase_strategy_required");
+    if (!tasks.empty && strategy === "reassign" && !destinationPhaseId) blockers.push("destination_phase_required");
+    if (!tasks.empty && strategy === "reassign" && destinationPhaseId) {
+      const destination = await project.collection("phases").doc(destinationPhaseId).get();
+      if (!destination.exists || (destination.data()?.lifecycle?.state || "active") !== "active" || destinationPhaseId === entityId) blockers.push("invalid_destination_phase");
+      else reassign.push(item("task", tasks.docs.map((doc) => doc.id)));
+    }
   } else if (entityType === "task") {
     const [comments, inbound, outbound, events] = await Promise.all([
       project.collection("tasks").doc(entityId).collection("comments").get(),
@@ -58,14 +64,51 @@ async function buildImpact(db, projectId, entityType, entityId) {
     retainImmutable.push(item("taskComment", comments.docs.map((doc) => doc.id)));
     removeRelationships.push(item("taskDependency", [...inbound.docs, ...outbound.docs].map((doc) => doc.id)), item("calendarEvent", events.docs.map((doc) => doc.id)));
     if (!comments.empty) warnings.push("task_comments_will_be_retained");
+    if (action === "restore") {
+      const task = await project.collection("tasks").doc(entityId).get();
+      const phase = task.exists ? await project.collection("phases").doc(task.data().phaseId).get() : null;
+      if (!phase?.exists || (phase.data()?.lifecycle?.state || "active") !== "active") blockers.push("replacement_phase_required");
+    }
+  } else if (entityType === "taskDependency" && action === "restore") {
+    const [target, dependencies] = await Promise.all([project.collection("taskDependencies").doc(entityId).get(), project.collection("taskDependencies").get()]);
+    const record = target.data();
+    const duplicate = dependencies.docs.some((doc) => doc.id !== entityId && (doc.data().lifecycle?.state || "active") === "active" && doc.data().taskId === record?.taskId && doc.data().dependsOnTaskId === record?.dependsOnTaskId);
+    if (duplicate) blockers.push("duplicate_dependency");
+    const active = dependencies.docs.filter((doc) => doc.id !== entityId && (doc.data().lifecycle?.state || "active") === "active").map((doc) => doc.data());
+    const edges = [...active, record].filter(Boolean);
+    const graph = new Map(); edges.forEach((edge) => graph.set(edge.taskId, [...(graph.get(edge.taskId) || []), edge.dependsOnTaskId]));
+    const visiting = new Set(); const visited = new Set();
+    const cyclic = (node) => { if (visiting.has(node)) return true; if (visited.has(node)) return false; visiting.add(node); if ((graph.get(node) || []).some(cyclic)) return true; visiting.delete(node); visited.add(node); return false; };
+    if ([...graph.keys()].some(cyclic)) blockers.push("dependency_cycle");
+    warnings.push("schedule_graph_will_be_revalidated");
+  } else if (entityType === "projectMember") {
+    const [membership, tasks, documents, members] = await Promise.all([project.collection("members").doc(entityId).get(), project.collection("tasks").where("assigneeId", "==", entityId).get(), project.collection("documents").where("ownerId", "==", entityId).get(), project.collection("members").get()]);
+    if (!membership.exists) blockers.push("legacy_membership_id_requires_repair");
+    const projectSnapshot = await project.get();
+    if (projectSnapshot.data()?.ownerId === entityId) blockers.push("project_owner_transfer_required");
+    const leads = members.docs.filter((doc) => doc.data().role === "lead" && (doc.data().lifecycle?.state || "active") === "active");
+    if (membership.data()?.role === "lead" && leads.length <= 1) blockers.push("last_project_lead_replacement_required");
+    reassign.push(item("task", tasks.docs.map((doc) => doc.id)), item("document", documents.docs.map((doc) => doc.id)));
+    if ((!tasks.empty || !documents.empty) && (strategy !== "reassign" || !replacementUserId)) blockers.push("membership_reassignment_required");
+    if (replacementUserId) {
+      const replacement = await project.collection("members").doc(replacementUserId).get();
+      if (!replacement.exists || (replacement.data()?.lifecycle?.state || "active") !== "active" || replacementUserId === entityId) blockers.push("invalid_replacement_member");
+    }
+  } else if (entityType === "milestone") {
+    const events = await project.collection("calendarEvents").where("relatedEntityId", "==", entityId).get();
+    retainImmutable.push(item("calendarEvent", events.docs.map((doc) => doc.id)));
+    if (!events.empty) warnings.push("linked_calendar_events_will_be_retained");
+  } else if (entityType === "risk") {
+    warnings.push("approved_report_snapshots_remain_unchanged");
   }
-  return { transition: transition.filter((entry) => entry.count), reassign: [], removeRelationships: removeRelationships.filter((entry) => entry.count), retainImmutable: retainImmutable.filter((entry) => entry.count), blockers, warnings, requiresTypedConfirmation: blockers.length > 0 || warnings.length > 0 };
+  return { transition: transition.filter((entry) => entry.count), reassign: reassign.filter((entry) => entry.count), removeRelationships: removeRelationships.filter((entry) => entry.count), retainImmutable: retainImmutable.filter((entry) => entry.count), blockers, warnings, requiresTypedConfirmation: blockers.length > 0 || warnings.length > 0 };
 }
 
 function validateAction(definition, action, role, record, now) {
   if (!definition.actions.includes(action)) throw new LifecycleError("unsupported_action");
   if (!(["admin", "project_manager"].includes(role))) throw new LifecycleError("permission_denied", 403);
   if (action === "purge" && role !== "admin") throw new LifecycleError("permission_denied", 403);
+  if (record.source === "computed" && ["trash", "purge"].includes(action)) throw new LifecycleError("computed_metric_not_deletable", 409);
   if (record.lifecycle?.legalHold && ["trash", "purge"].includes(action)) throw new LifecycleError("legal_hold", 409);
   if (action === "restore" && !["archived", "trashed", "removed"].includes(stateOf(record))) throw new LifecycleError("not_restorable", 409);
   if (action === "purge" && (!record.lifecycle?.purgeEligibleAt || Date.parse(record.lifecycle.purgeEligibleAt) > now.getTime())) throw new LifecycleError("retention_not_satisfied", 409);
@@ -79,7 +122,7 @@ export async function previewLifecycle(input, { db = database() } = {}) {
   const project = projectSnapshot.data(); const record = targetSnapshot.data();
   if ((project.revision || 1) !== expectedProjectRevision) throw new LifecycleError("revision_conflict", 409);
   validateAction(definition, action, actor.role, record, new Date());
-  const impact = await buildImpact(db, projectId, entityType, entityId);
+  const impact = await buildImpact(db, projectId, entityType, entityId, input);
   const token = previewToken({ projectId, entityType, entityId, action, expectedProjectRevision, state: stateOf(record), impact });
   return { projectRevision: project.revision || 1, entityState: stateOf(record), impact, previewToken: token };
 }
@@ -96,7 +139,7 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
   }
   const preview = await previewLifecycle(input, { db });
   if (preview.previewToken !== input.previewToken) throw new LifecycleError("stale_preview", 409);
-  if (preview.impact.blockers.length && !input.confirmed) throw new LifecycleError("impact_blocked", 409);
+  if (preview.impact.blockers.length) throw new LifecycleError("impact_blocked", 409);
   const projectRef = db.doc(`organizations/${API_ORGANIZATION_ID}/projects/${input.projectId}`);
   const entityRef = targetRef(db, input.projectId, input.entityType, input.entityId);
   return db.runTransaction(async (transaction) => {
@@ -109,7 +152,7 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
     const resultingState = { archive: "archived", trash: "trashed", remove: "removed", restore: "active", purge: "purged" }[input.action] || stateOf(record);
     const revisionAfter = (project.revision || 1) + 1;
     const timestamp = now.toISOString(); const deadline = new Date(now.getTime() + retentionDays * 86400000).toISOString();
-    const operation = { id: opId, idempotencyKey: input.idempotencyKey, organizationId: API_ORGANIZATION_ID, projectId: input.projectId, entityType: input.entityType, entityId: input.entityId, entityDisplayLabel: String(record[registry[input.entityType].label] || input.entityId), requestedAction: input.action, resultingLifecycleState: resultingState, actorId: input.actor.id, actorRole: input.actor.role, reason: { code: input.reason.code, ...(input.reason.note ? { note: input.reason.note.slice(0, 500) } : {}) }, requestedAt: timestamp, appliedAt: timestamp, priorState: stateOf(record), resultingState, impactCounts: Object.fromEntries([...preview.impact.transition, ...preview.impact.removeRelationships, ...preview.impact.retainImmutable].map((entry) => [entry.entityType, entry.count])), strategy: input.strategy || "retain_related", projectRevisionBefore: project.revision || 1, projectRevisionAfter: revisionAfter, status: "applied", purgeEligibleAt: input.action === "purge" ? record.lifecycle?.purgeEligibleAt : deadline, immutableHistoryRetained: true };
+    const operation = { id: opId, idempotencyKey: input.idempotencyKey, organizationId: API_ORGANIZATION_ID, projectId: input.projectId, entityType: input.entityType, entityId: input.entityId, entityDisplayLabel: String(record[registry[input.entityType].label] || input.entityId), action: input.action, requestedAction: input.action, resultingLifecycleState: resultingState, actor: input.actor, actorId: input.actor.id, actorRole: input.actor.role, reason: { code: input.reason.code, ...(input.reason.note ? { note: input.reason.note.slice(0, 500) } : {}) }, requestedAt: timestamp, appliedAt: timestamp, priorState: stateOf(record), resultingState, impactCounts: Object.fromEntries([...preview.impact.transition, ...preview.impact.removeRelationships, ...preview.impact.retainImmutable].map((entry) => [entry.entityType, entry.count])), strategy: input.strategy || "retain_related", projectRevisionBefore: project.revision || 1, projectRevisionAfter: revisionAfter, status: "applied", purgeEligibleAt: input.action === "purge" ? record.lifecycle?.purgeEligibleAt : deadline, immutableHistoryRetained: true };
     if (input.action === "purge") transaction.delete(entityRef);
     else {
       const lifecycle = { schemaVersion: 1, state: resultingState, retentionClass: record.lifecycle?.retentionClass || "operational_30d", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId };
@@ -118,9 +161,67 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
       if (input.action === "restore") lifecycle.restored = { at: timestamp, by: input.actor.id };
       transaction.update(entityRef, { lifecycle });
     }
+    if (input.entityType === "task" && input.action === "trash") {
+      const dependencies = preview.impact.removeRelationships.find((entry) => entry.entityType === "taskDependency")?.ids || [];
+      dependencies.forEach((dependencyId) => transaction.update(projectRef.collection("taskDependencies").doc(dependencyId), { lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", legalHold: false, lastOperationId: opId, removed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } }));
+    }
+    if (input.entityType === "phase" && input.action === "trash" && input.strategy === "cascade_trash") {
+      const tasks = preview.impact.transition.find((entry) => entry.entityType === "task")?.ids || [];
+      tasks.forEach((taskId) => transaction.update(projectRef.collection("tasks").doc(taskId), { lifecycle: { schemaVersion: 1, state: "trashed", retentionClass: "operational_30d", legalHold: false, lastOperationId: opId, trashed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } }));
+    }
+    if (input.entityType === "phase" && input.action === "trash" && input.strategy === "reassign") {
+      const tasks = preview.impact.reassign.find((entry) => entry.entityType === "task")?.ids || [];
+      tasks.forEach((taskId) => transaction.update(projectRef.collection("tasks").doc(taskId), { phaseId: input.destinationPhaseId }));
+    }
+    if (input.entityType === "projectMember" && input.action === "remove" && input.strategy === "reassign") {
+      const tasks = preview.impact.reassign.find((entry) => entry.entityType === "task")?.ids || [];
+      const documents = preview.impact.reassign.find((entry) => entry.entityType === "document")?.ids || [];
+      tasks.forEach((taskId) => transaction.update(projectRef.collection("tasks").doc(taskId), { assigneeId: input.replacementUserId }));
+      documents.forEach((documentId) => transaction.update(projectRef.collection("documents").doc(documentId), { ownerId: input.replacementUserId }));
+    }
     transaction.update(projectRef, { revision: revisionAfter, updatedAt: timestamp, lastStructuralChangeAt: timestamp });
     transaction.set(projectRef.collection("versions").doc(`version_${opId}`), { id: `version_${opId}`, projectId: input.projectId, revision: revisionAfter, previousRevision: project.revision || 1, changeType: "lifecycle", summary: `${input.action} ${input.entityType} ${input.entityId}`, actorId: input.actor.id, metadata: { operationId: opId }, createdAt: timestamp });
     transaction.set(projectRef.collection("activityEvents").doc(`activity_${opId}`), { id: `activity_${opId}`, projectId: input.projectId, actorId: input.actor.id, type: "record_lifecycle", message: `${input.action} ${input.entityType}`, metadata: { operationId: opId, entityId: input.entityId }, createdAt: timestamp });
+    transaction.create(operationRef, operation);
+    return { operation, duplicate: false };
+  });
+}
+
+export async function previewOrganizationLifecycle(input, { db = database() } = {}) {
+  if (input.entityType !== "client") throw new LifecycleError("unsupported_entity");
+  const target = db.doc(`organizations/${API_ORGANIZATION_ID}/clients/${input.entityId}`);
+  const snapshot = await target.get();
+  if (!snapshot.exists) throw new LifecycleError("record_not_found", 404);
+  const record = snapshot.data();
+  validateAction({ actions: ["archive", "trash", "restore", "purge"] }, input.action, input.actor.role, record, new Date());
+  const projects = await db.collection(`organizations/${API_ORGANIZATION_ID}/projects`).where("clientId", "==", input.entityId).get();
+  const projectIds = projects.docs.map((doc) => doc.id);
+  const blockers = input.action === "purge" && projectIds.length ? ["client_projects_require_explicit_handling"] : [];
+  const warnings = input.action === "archive" && projectIds.length ? ["client_projects_will_not_be_archived"] : [];
+  const impact = { transition: [], reassign: [], removeRelationships: [], retainImmutable: projectIds.length ? [item("project", projectIds)] : [], blockers, warnings, requiresTypedConfirmation: blockers.length > 0 || warnings.length > 0 };
+  return { projectRevision: 0, entityState: stateOf(record), impact, previewToken: previewToken({ entityType: "client", entityId: input.entityId, action: input.action, state: stateOf(record), impact }) };
+}
+
+export async function applyOrganizationLifecycle(input, { db = database(), now = new Date() } = {}) {
+  const opId = operationId(API_ORGANIZATION_ID, input.idempotencyKey);
+  const operationRef = db.doc(`organizations/${API_ORGANIZATION_ID}/recordLifecycleOperations/${opId}`);
+  const prior = await operationRef.get();
+  if (prior.exists) return { operation: prior.data(), duplicate: true };
+  const preview = await previewOrganizationLifecycle(input, { db });
+  if (preview.previewToken !== input.previewToken) throw new LifecycleError("stale_preview", 409);
+  if (preview.impact.blockers.length) throw new LifecycleError("impact_blocked", 409);
+  const target = db.doc(`organizations/${API_ORGANIZATION_ID}/clients/${input.entityId}`);
+  return db.runTransaction(async (transaction) => {
+    const [existing, snapshot] = await Promise.all([transaction.get(operationRef), transaction.get(target)]);
+    if (existing.exists) return { operation: existing.data(), duplicate: true };
+    if (!snapshot.exists) throw new LifecycleError("record_not_found", 404);
+    const record = snapshot.data(); const timestamp = now.toISOString(); const deadline = new Date(now.getTime() + retentionDays * 86400000).toISOString();
+    validateAction({ actions: ["archive", "trash", "restore", "purge"] }, input.action, input.actor.role, record, now);
+    const state = { archive: "archived", trash: "trashed", restore: "active", purge: "purged" }[input.action];
+    const reason = { code: input.reason.code, ...(input.reason.note ? { note: input.reason.note.slice(0, 500) } : {}) };
+    const operation = { id: opId, idempotencyKey: input.idempotencyKey, organizationId: API_ORGANIZATION_ID, entityType: "client", entityId: input.entityId, entityDisplayLabel: record.name || input.entityId, action: input.action, requestedAction: input.action, actor: input.actor, actorId: input.actor.id, actorRole: input.actor.role, reason, requestedAt: timestamp, appliedAt: timestamp, priorState: stateOf(record), resultingState: state, impactCounts: { project: preview.impact.retainImmutable[0]?.count || 0 }, status: "applied", purgeEligibleAt: input.action === "purge" ? record.lifecycle?.purgeEligibleAt : deadline, immutableHistoryRetained: true };
+    if (input.action === "purge") transaction.delete(target);
+    else transaction.update(target, { lifecycle: { schemaVersion: 1, state, retentionClass: "business_7y", legalHold: record.lifecycle?.legalHold === true, lastOperationId: opId, ...(input.action === "archive" ? { archived: { at: timestamp, by: input.actor.id, reason } } : {}), ...(input.action === "trash" ? { trashed: { at: timestamp, by: input.actor.id, reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } : {}), ...(input.action === "restore" ? { restored: { at: timestamp, by: input.actor.id } } : {}) } });
     transaction.create(operationRef, operation);
     return { operation, duplicate: false };
   });

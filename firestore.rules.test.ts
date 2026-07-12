@@ -292,6 +292,14 @@ describe("Firestore operational readiness rules", () => {
     await assertSucceeds(getDocs(ownerQuery));
   });
 
+  it("immediately revokes access when a project membership is lifecycle-removed", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), ...orgPath("projects", projectId, "members", "contributor")), { lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", lastOperationId: "op_remove" } });
+    });
+    await assertFails(getDoc(projectRef("contributor")));
+    await assertFails(getDocs(query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"))));
+  });
+
   it("preserves contributor task-update restrictions", async () => {
     await assertSucceeds(updateDoc(doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned")), { status: "in_progress", priority: "high", updatedAt: "2026-07-10T01:00:00.000Z" }));
     await assertFails(updateDoc(doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned")), { assigneeId: "viewer", updatedAt: "2026-07-10T01:00:00.000Z" }));

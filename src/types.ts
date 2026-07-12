@@ -264,6 +264,7 @@ export type ProjectMetric = {
   suffix: string;
   tone: "success" | "warning" | "danger" | "info";
   lifecycle?: RecordLifecycleMetadata;
+  source?: "manual" | "imported" | "computed";
 };
 
 export type ProjectActivityEvent = {
@@ -595,6 +596,9 @@ export type ProjectVersion = {
     | "dependency_deleted"
     | "risk_created"
     | "risk_updated"
+    | "lifecycle"
+    | "membership_added"
+    | "membership_role_changed"
     | "project_exported"
     | "project_file_updated";
   summary: string;

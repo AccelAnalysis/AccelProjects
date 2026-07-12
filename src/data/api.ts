@@ -42,15 +42,23 @@ export type LifecycleRequest = {
   reason: LifecycleReason;
   previewToken?: string;
   strategy?: string;
+  destinationPhaseId?: string;
+  replacementUserId?: string;
   confirmed?: boolean;
 };
 
 export function previewRecordLifecycle(projectId: string, entityType: LifecycleEntityType, entityId: string, input: Omit<LifecycleRequest, "previewToken" | "confirmed">) {
-  return request<{ projectRevision: number; entityState: string; impact: LifecycleImpact; previewToken: string }>(`/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/impact`, { method: "POST", body: JSON.stringify(input) });
+  const path = entityType === "client" ? `/api/lifecycle/client/${entityId}/impact` : `/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/impact`;
+  return request<{ projectRevision: number; entityState: string; impact: LifecycleImpact; previewToken: string }>(path, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function applyRecordLifecycle(projectId: string, entityType: LifecycleEntityType, entityId: string, input: LifecycleRequest) {
-  return request<{ operation: LifecycleOperation; duplicate: boolean }>(`/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/actions`, { method: "POST", body: JSON.stringify(input) });
+  const path = entityType === "client" ? `/api/lifecycle/client/${entityId}/actions` : `/api/projects/${projectId}/lifecycle/${entityType}/${entityId}/actions`;
+  return request<{ operation: LifecycleOperation; duplicate: boolean }>(path, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listLifecycleOperations() {
+  return request<{ operations: LifecycleOperation[] }>("/api/lifecycle/operations");
 }
 
 async function getAuthenticatedHeaders(options?: RequestInit) {

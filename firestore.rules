@@ -42,6 +42,10 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["lifecycle"]);
     }
 
+    function resourceLifecycleActive() {
+      return !("lifecycle" in resource.data) || resource.data.lifecycle.state == "active";
+    }
+
     function isProjectManagerRole(organizationId) {
       return isOrgMember(organizationId)
         && signedInUserRole(organizationId) == "project_manager";
@@ -63,7 +67,9 @@ service cloud.firestore {
 
     function isProjectMemberByUserId(organizationId, projectId, userId) {
       return exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId))
-        && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.userId == userId;
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.userId == userId
+        && (!("lifecycle" in get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data)
+          || get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.lifecycle.state == "active");
     }
 
     function isProjectOwnerManager(organizationId, projectId) {
@@ -273,7 +279,8 @@ service cloud.firestore {
       return isSignedIn()
         && signedInUserRole("org_accel_projects") != null
         && ("userId" in resource.data)
-        && resource.data.userId == request.auth.uid;
+        && resource.data.userId == request.auth.uid
+        && resourceLifecycleActive();
     }
 
     function validRecipientList(recipients) {
@@ -463,7 +470,7 @@ service cloud.firestore {
 
         match /members/{memberId} {
           allow read: if canReadProject(organizationId, projectId)
-            || (isSignedIn() && resource.data.userId == request.auth.uid);
+            || (isSignedIn() && resource.data.userId == request.auth.uid && resourceLifecycleActive());
           allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
           allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
           allow delete: if false;

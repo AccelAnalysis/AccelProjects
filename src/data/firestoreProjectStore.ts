@@ -702,25 +702,6 @@ export async function updateMilestoneInFirestore(milestoneId: string, updates: P
   });
 }
 
-export async function deleteMilestoneInFirestore(milestoneId: string, projectId?: string) {
-  const safeMilestoneId = requirePathSegment(milestoneId, "milestoneId");
-  const state = projectId ? null : await loadProjectStateForCurrentUser();
-  const milestone = state?.milestones.find((item) => item.id === safeMilestoneId);
-  const safeProjectId = projectId ?? milestone?.projectId;
-
-  if (!safeProjectId) {
-    throw new Error(`Milestone ${safeMilestoneId} was not found in Firestore.`);
-  }
-
-  await commitProjectMutation(safeProjectId, {
-    changeType: "milestone_deleted",
-    summary: "Deleted milestone.",
-    metadata: { milestoneId: safeMilestoneId }
-  }, (transaction, database) => {
-    transaction.delete(doc(database, ...projectPath(safeProjectId), projectCollectionMap.milestones, safeMilestoneId));
-  });
-}
-
 export async function createTaskDependencyInFirestore(dependency: Omit<TaskDependency, "id">, projectId?: string) {
   const state = await loadProjectStateForCurrentUser();
   const task = state.tasks.find((item) => item.id === requirePathSegment(dependency.taskId, "dependency.taskId"));
@@ -794,26 +775,6 @@ export async function updateTaskDependencyInFirestore(dependencyId: string, upda
     metadata: { dependencyId: safeDependencyId, updates }
   }, (transaction, database) => {
     transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.taskDependencies, safeDependencyId), updates);
-  });
-}
-
-export async function deleteTaskDependencyInFirestore(dependencyId: string, projectId?: string) {
-  const safeDependencyId = requirePathSegment(dependencyId, "dependencyId");
-  const state = await loadProjectStateForCurrentUser();
-  const dependency = state.taskDependencies.find((item) => item.id === safeDependencyId);
-  const task = dependency ? state.tasks.find((item) => item.id === dependency.taskId) : undefined;
-  const safeProjectId = projectId ?? task?.projectId;
-
-  if (!dependency || !safeProjectId) {
-    throw new Error(`Dependency ${safeDependencyId} was not found in Firestore.`);
-  }
-
-  await commitProjectMutation(safeProjectId, {
-    changeType: "dependency_deleted",
-    summary: "Deleted task dependency.",
-    metadata: { dependencyId: safeDependencyId }
-  }, (transaction, database) => {
-    transaction.delete(doc(database, ...projectPath(safeProjectId), projectCollectionMap.taskDependencies, safeDependencyId));
   });
 }
 
@@ -1145,6 +1106,24 @@ export async function createRiskInFirestore(risk: Omit<ProjectRisk, "id">) {
     transaction.set(doc(database, ...projectPath(requirePathSegment(newRisk.projectId, "risk.projectId")), projectCollectionMap.risks, newRisk.id), newRisk);
   });
   return newRisk;
+}
+
+export async function addProjectMemberInFirestore(projectId: string, userId: string, role: ProjectMember["role"]) {
+  const safeProjectId = requirePathSegment(projectId, "projectId");
+  const safeUserId = requirePathSegment(userId, "userId");
+  const member: ProjectMember = { id: safeUserId, projectId: safeProjectId, userId: safeUserId, role };
+  await commitProjectMutation(safeProjectId, { changeType: "membership_added", summary: "Added project member.", metadata: { userId: safeUserId, role } }, (transaction, database) => {
+    transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectMembers, safeUserId), member);
+  });
+  return member;
+}
+
+export async function updateProjectMemberRoleInFirestore(projectId: string, userId: string, role: ProjectMember["role"]) {
+  const safeProjectId = requirePathSegment(projectId, "projectId");
+  const safeUserId = requirePathSegment(userId, "userId");
+  await commitProjectMutation(safeProjectId, { changeType: "membership_role_changed", summary: "Changed project member role.", metadata: { userId: safeUserId, role } }, (transaction, database) => {
+    transaction.update(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectMembers, safeUserId), { role });
+  });
 }
 
 export async function updateRiskInFirestore(riskId: string, updates: Partial<ProjectRisk>, projectId?: string) {

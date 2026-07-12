@@ -785,11 +785,8 @@ export function PlanWorkspace({
           onClose={() => setSelectedMilestoneId(null)}
           onUpdate={(updates) => proposeMilestoneChange(selectedMilestone, updates, "Update milestone")}
           onDelete={async () => {
-            if (window.confirm(`Delete milestone "${selectedMilestone.name}"?`)) {
-              await onDeleteMilestone(selectedMilestone.id);
-              setUndoCommand({ label: "Undo milestone deletion", run: () => onCreateMilestone({ projectId: selectedMilestone.projectId, name: selectedMilestone.name, date: selectedMilestone.date, status: selectedMilestone.status }).then(() => undefined) });
-              setSelectedMilestoneId(null);
-            }
+            await onDeleteMilestone(selectedMilestone.id);
+            setSelectedMilestoneId(null);
           }}
         />
       ) : null}
@@ -1705,7 +1702,7 @@ function MilestoneDetailPanel({
           </select>
         </label>
       </div>
-      {canEdit ? <button className="secondary-button danger-button" type="button" onClick={onDelete}><Trash2 size={16} aria-hidden="true" />Delete Milestone</button> : null}
+      {canEdit ? <button className="secondary-button danger-button" type="button" onClick={onDelete}><Trash2 size={16} aria-hidden="true" />Move Milestone to Trash</button> : null}
     </aside>
   );
 }

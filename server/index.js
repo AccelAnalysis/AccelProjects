@@ -1,7 +1,8 @@
 import express from "express";
 import "dotenv/config";
 import Stripe from "stripe";
-import { createFirebaseAuthMiddleware, requireRoles } from "./apiAuth.js";
+import { getFirestore } from "firebase-admin/firestore";
+import { API_ORGANIZATION_ID, createFirebaseAuthMiddleware, getAdminApp, requireRoles } from "./apiAuth.js";
 import { orderReceivedTemplate } from "./emailTemplates.js";
 import { getMicrosoftProjectConfig } from "./microsoftGraphService.js";
 import { sendMicrosoftEmail } from "./microsoftGraphEmailService.js";
@@ -9,8 +10,8 @@ import { getMicrosoftGraphAccessToken } from "./microsoftGraphAuthService.js";
 import { validateMicrosoftEmailConfig } from "./microsoftEmailConfig.js";
 import { sendEmail } from "./mockEmailService.js";
 import { sendSms } from "./mockSmsService.js";
-import { requireProjectAccess } from "./projectAuthorization.js";
-import { applyLifecycle, LifecycleError, previewLifecycle } from "./lifecycleService.js";
+import { loadProjectAccess, requireProjectAccess } from "./projectAuthorization.js";
+import { applyLifecycle, applyOrganizationLifecycle, LifecycleError, previewLifecycle, previewOrganizationLifecycle } from "./lifecycleService.js";
 import {
   cancelCalendarEvent,
   createCalendarDraft,
@@ -75,6 +76,7 @@ const app = express();
 const port = process.env.API_PORT || 5174;
 const requireFirebaseAuth = createFirebaseAuthMiddleware();
 const requireAdmin = requireRoles(["admin"]);
+const requireLifecycleManager = requireRoles(["admin", "project_manager"]);
 const requireProjectRead = requireProjectAccess("read");
 const requireProjectCommunication = requireProjectAccess("communication");
 const requireProjectCalendar = requireProjectAccess("calendar");
@@ -346,6 +348,28 @@ app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/impact", requ
 
 app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/actions", requireProjectCommunication, async (request, response) => {
   try { return response.json(await applyLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.post("/api/lifecycle/client/:entityId/impact", requireAdmin, async (request, response) => {
+  try { return response.json(await previewOrganizationLifecycle({ ...request.body, entityType: "client", entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } })); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.post("/api/lifecycle/client/:entityId/actions", requireAdmin, async (request, response) => {
+  try { return response.json(await applyOrganizationLifecycle({ ...request.body, entityType: "client", entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } })); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.get("/api/lifecycle/operations", requireLifecycleManager, async (request, response) => {
+  const database = getFirestore(getAdminApp());
+  const snapshot = await database.collection(`organizations/${API_ORGANIZATION_ID}/recordLifecycleOperations`).orderBy("requestedAt", "desc").limit(200).get();
+  const operations = snapshot.docs.map((doc) => doc.data());
+  if (request.auth.profile.role === "admin") return response.json({ operations });
+  const visible = [];
+  for (const operation of operations) {
+    if (!operation.projectId) continue;
+    const access = await loadProjectAccess({ uid: request.auth.uid, role: request.auth.profile.role }, operation.projectId, { database });
+    if (access.canManageCommunication) visible.push(operation);
+  }
+  return response.json({ operations: visible });
 });
 
 app.use("/api/portal", (_request, response, next) => {

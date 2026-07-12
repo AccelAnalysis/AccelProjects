@@ -12,7 +12,7 @@ import {
   Plus,
   X
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   Client,
   Milestone,
@@ -183,7 +183,8 @@ export function TaskTable({
   canEdit,
   canEditTask,
   onOpenTask,
-  onUpdateTask
+  onUpdateTask,
+  renderLifecycleActions
 }: {
   tasks: Task[];
   phases: Phase[];
@@ -192,6 +193,7 @@ export function TaskTable({
   canEditTask?: (task: Task) => boolean;
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
+  renderLifecycleActions?: (task: Task) => ReactNode;
 }) {
   return (
     <div className="table-wrap">
@@ -259,7 +261,7 @@ export function TaskTable({
                   )}
                 </td>
                 <td>
-                  <button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>
+                  <div className="inline-actions"><button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>{renderLifecycleActions?.(task)}</div>
                 </td>
               </tr>
             );
@@ -279,7 +281,8 @@ export function TaskDetailPanel({
   canAddComment,
   onClose,
   onUpdateTask,
-  onAddComment
+  onAddComment,
+  lifecycleActions
 }: {
   task: Task;
   phases: Phase[];
@@ -290,6 +293,7 @@ export function TaskDetailPanel({
   onClose: () => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onAddComment: (taskId: string, body: string) => void;
+  lifecycleActions?: ReactNode;
 }) {
   const [newComment, setNewComment] = useTaskCommentDraft(task.id);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -319,6 +323,7 @@ export function TaskDetailPanel({
           <p className="eyebrow">{getPhaseName(phases, task.phaseId)}</p>
           <h2>{task.title}</h2>
         </div>
+        {lifecycleActions}
         <button ref={closeButtonRef} className="icon-button" type="button" onClick={onClose} aria-label="Close task detail">
           <X size={18} aria-hidden="true" />
         </button>
@@ -821,12 +826,14 @@ export function RiskRegister({
   risks,
   canManage,
   onAddRisk,
-  onUpdateRisk
+  onUpdateRisk,
+  renderLifecycleActions
 }: {
   risks: ProjectRisk[];
   canManage: boolean;
   onAddRisk: (risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) => void;
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
+  renderLifecycleActions?: (risk: ProjectRisk) => ReactNode;
 }) {
   const [draft, setDraft] = useRiskDraft();
   const [formOpen, setFormOpen] = useState(risks.length === 0);
@@ -907,6 +914,7 @@ export function RiskRegister({
                     <option key={severity} value={severity}>{severity}</option>
                   ))}
                 </select>
+                {renderLifecycleActions?.(risk)}
               </div>
             ) : null}
           </article>

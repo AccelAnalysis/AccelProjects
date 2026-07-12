@@ -49,6 +49,14 @@ describe("ProjectsPage portfolio timeline", () => {
 
     expect(onNavigate).toHaveBeenCalledWith("/projects/project_b/plan");
   });
+
+  it("excludes archived and trashed projects from cards and the portfolio timeline", () => {
+    const lifecycleState = structuredClone(projectState);
+    lifecycleState.projects[1].lifecycle = { schemaVersion: 1, state: "trashed", retentionClass: "business_7y", lastOperationId: "op" };
+    render(<ProjectsPage {...makeProjectPageProps({ projectState: lifecycleState })} />);
+    expect(screen.queryByText("Beta Launch")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Alpha Build" })).toBeInTheDocument();
+  });
 });
 
 describe("SettingsPage", () => {

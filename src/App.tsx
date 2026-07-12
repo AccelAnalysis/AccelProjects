@@ -1,4 +1,5 @@
 import {
+  Archive,
   Bell,
   BriefcaseBusiness,
   ChevronDown,
@@ -52,12 +53,14 @@ import { ProjectImportPage } from "./pages/ProjectImportPage";
 import { ProjectUpdatePage } from "./pages/ProjectUpdatePage";
 import { SystemTestsPage } from "./pages/SystemTestsPage";
 import { TestPage } from "./pages/TestPage";
+import { LifecycleWorkspacePage } from "./pages/LifecycleWorkspacePage";
 import {
   GlobalSearchResults,
   NewTaskForm,
   TaskDetailPanel
 } from "./components/project/ProjectWidgets";
 import { GlobalNavigation } from "./components/layout/GlobalNavigation";
+import { RecordActionsMenu } from "./components/lifecycle/LifecycleComponents";
 import {
   buildProjectPath,
   buildProjectUpdatePath,
@@ -78,6 +81,7 @@ import {
 import { demoRoles, initialProjectState } from "./data/projectMockData";
 import {
   addTaskCommentInFirestore,
+  addProjectMemberInFirestore,
   batchUpdateTaskSchedulesInFirestore,
   createMilestoneInFirestore,
   createProjectExportSnapshotInFirestore,
@@ -85,8 +89,6 @@ import {
   createScheduleActivityEventInFirestore,
   createTaskInFirestore,
   createTaskDependencyInFirestore,
-  deleteMilestoneInFirestore,
-  deleteTaskDependencyInFirestore,
   ensureFirestoreUserProfile,
   getFirestorePermissionMessage,
   loadCurrentUserProfileFromFirestore,
@@ -94,11 +96,13 @@ import {
   resetFirestoreProjectState,
   seedProjectStateToFirestore,
   updateMilestoneInFirestore,
+  updateProjectMemberRoleInFirestore,
   updateOwnUserProfileInFirestore,
   updateRiskInFirestore,
   updateTaskDependencyInFirestore,
   updateTaskInFirestore
 } from "./data/firestoreProjectStore";
+import { applyRecordLifecycle, previewRecordLifecycle } from "./data/api";
 import {
   createCanonicalProjectExport,
   createProjectExportSnapshotId,
@@ -113,8 +117,9 @@ import {
 } from "./data/projectStore";
 import { areDevelopmentToolsEnabled, isRolePreviewEnabled } from "./environment";
 import { validateDependencies } from "./scheduling/dependencyGraph";
-import type { Milestone, ProjectActivityEvent, ProjectRisk, ProjectState, Task, TaskDependency, User, UserRole } from "./types";
+import type { Milestone, ProjectActivityEvent, ProjectMember, ProjectRisk, ProjectState, Task, TaskDependency, User, UserRole } from "./types";
 import { formatDateOnly } from "./utils/dateOnly";
+import { isLifecycleActive } from "./lifecycle/policy";
 import accelLogo from "../Accel_GOH_Logo.png";
 
 const primaryNavItems = [
@@ -127,6 +132,7 @@ const primaryNavItems = [
 ];
 
 const utilityNavItems = [
+  { href: "/records", label: "Archive & Trash", icon: Archive },
   { href: "/billing", label: "Billing", icon: ClipboardList },
   { href: "/system-tests", label: "System Tests", icon: FlaskConical },
   { href: "/settings", label: "Settings", icon: Settings }
@@ -176,6 +182,9 @@ export type ProjectPageProps = {
   onNavigate: (path: string, options?: { replace?: boolean }) => void;
   onProjectChange: (projectId: string) => void;
   onNewTask: () => void;
+  onLifecycleApplied?: () => Promise<void>;
+  onAddProjectMember?: (userId: string, role: ProjectMember["role"]) => Promise<void>;
+  onChangeProjectMemberRole?: (userId: string, role: ProjectMember["role"]) => Promise<void>;
 };
 
 const emptyProjectState: ProjectState = {
@@ -333,6 +342,10 @@ function getRoute(props: ProjectPageProps, pathname: string) {
 
   if (path === "/clients") {
     return <ClientsPage {...props} />;
+  }
+
+  if (path === "/records") {
+    return <LifecycleWorkspacePage {...props} />;
   }
 
   if (path === "/my-work") {
@@ -602,7 +615,7 @@ export function ProjectContextBar({
   const project = projectState.projects.find((item) => item.id === selectedProjectId) ?? projectState.projects[0];
   const client = projectState.clients.find((item) => item.id === project.clientId);
   const owner = projectState.users.find((item) => item.id === project.ownerId);
-  const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+  const tasks = projectState.tasks.filter((task) => task.projectId === project.id && isLifecycleActive(task));
   const completeTasks = tasks.filter((task) => task.status === "done").length;
   const progress = tasks.length > 0 ? Math.round((completeTasks / tasks.length) * 100) : 0;
   const healthTone = project.health === "blocked" ? "danger" : project.health === "at_risk" ? "warning" : "success";
@@ -620,7 +633,7 @@ export function ProjectContextBar({
               <ChevronDown size={16} aria-hidden="true" />
             </summary>
             <div className="project-switcher-popover" role="menu" aria-label="Switch project">
-              {projectState.projects.map((candidate) => {
+              {projectState.projects.filter(isLifecycleActive).map((candidate) => {
                 const candidateClient = projectState.clients.find((item) => item.id === candidate.clientId);
                 const selected = candidate.id === project.id;
 
@@ -819,19 +832,20 @@ function AppShell() {
 
   const projectRoute = parseProjectRoute(pathname);
   const routeProjectId = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import" || projectRoute.type === "import" || projectRoute.type === "invalid-tab") ? projectRoute.projectId : undefined;
-  const routeProject = routeProjectId ? projectState.projects.find((project) => project.id === routeProjectId) : undefined;
-  const selectedProject = routeProject ?? projectState.projects.find((project) => project.id === selectedProjectId) ?? projectState.projects[0];
+  const activeProjects = projectState.projects.filter(isLifecycleActive);
+  const routeProject = routeProjectId ? activeProjects.find((project) => project.id === routeProjectId) : undefined;
+  const selectedProject = routeProject ?? activeProjects.find((project) => project.id === selectedProjectId) ?? activeProjects[0];
   const activeProjectTab = projectRoute.type === "workspace" ? projectRoute.tab ?? defaultProjectTab : defaultProjectTab;
   const routeIsValidProjectWorkspace = (projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import") && Boolean(routeProject);
   const projectPhases = useMemo(
-    () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id),
+    () => projectState.phases.filter((phase) => phase.projectId === selectedProject?.id && isLifecycleActive(phase)),
     [projectState.phases, selectedProject?.id]
   );
   const projectTasks = useMemo(
-    () => projectState.tasks.filter((task) => task.projectId === selectedProject?.id),
+    () => projectState.tasks.filter((task) => task.projectId === selectedProject?.id && isLifecycleActive(task)),
     [projectState.tasks, selectedProject?.id]
   );
-  const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId) : undefined;
+  const selectedTask = selectedTaskId ? projectState.tasks.find((task) => task.id === selectedTaskId && isLifecycleActive(task)) : undefined;
   const profileRole = getUserRole(userProfile);
   const rolePreviewEnabled = isRolePreviewEnabled();
   const developmentToolsEnabled = areDevelopmentToolsEnabled();
@@ -844,9 +858,10 @@ function AppShell() {
   const routeNeedsProjectData = projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update" || projectRoute.type === "legacy-project-import" || projectRoute.type === "invalid-tab" || pathname in legacyProjectRouteMap;
   const canEditCurrentTask = (task: Task) => canEditTask(role, userProfile, task, projectState);
   const canAddCommentToCurrentTask = (task: Task) => canAddTaskComment(role, userProfile, task, projectState);
+  const roleScopedUtilityItems = ["admin", "project_manager"].includes(profileRole) ? utilityNavItems : utilityNavItems.filter((item) => item.href !== "/records");
   const visibleUtilityNavItems = developmentToolsEnabled && profileRole === "admin"
-    ? utilityNavItems
-    : utilityNavItems.filter((item) => item.href !== "/system-tests");
+    ? roleScopedUtilityItems
+    : roleScopedUtilityItems.filter((item) => item.href !== "/system-tests");
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -864,6 +879,11 @@ function AppShell() {
       saveSelectedProjectId(routeProject.id);
     }
 
+    if ((projectRoute.type === "workspace" || projectRoute.type === "version-history" || projectRoute.type === "update") && routeProjectId && !routeProject) {
+      navigate("/projects", { replace: true });
+      return;
+    }
+
     if (projectRoute.type === "workspace" && routeProject && !pathname.endsWith(`/${projectRoute.tab ?? defaultProjectTab}`)) {
       navigate(buildProjectPath(routeProject.id, projectRoute.tab ?? defaultProjectTab), { replace: true });
     }
@@ -871,7 +891,7 @@ function AppShell() {
     if (pathname in legacyProjectRouteMap && selectedProject?.id) {
       navigate(buildProjectPath(selectedProject.id, legacyProjectRouteMap[pathname]), { replace: true });
     }
-  }, [pathname, projectLoading, projectRoute, projectState.projects.length, routeProject, selectedProject?.id, selectedProjectId]);
+  }, [pathname, projectLoading, projectRoute, projectState.projects.length, routeProject, routeProjectId, selectedProject?.id, selectedProjectId]);
 
   useEffect(() => {
     setSelectedTaskId(undefined);
@@ -1068,15 +1088,12 @@ function AppShell() {
     }
 
     try {
-      await deleteMilestoneInFirestore(milestoneId, milestone.projectId);
-      const event = await logScheduleActivity(milestone.projectId, `Deleted milestone ${milestone.name}.`, { milestoneId });
-      setProjectState((current) => ({
-        ...current,
-        ...withLocalProjectRevision(current, milestone.projectId),
-        milestones: current.milestones.filter((item) => item.id !== milestoneId),
-        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
-      }));
-      setProjectNotice("Milestone deleted.");
+      const revision = projectState.projects.find((project) => project.id === milestone.projectId)?.revision ?? 1;
+      const idempotencyKey = crypto.randomUUID();
+      const preview = await previewRecordLifecycle(milestone.projectId, "milestone", milestoneId, { action: "trash", expectedProjectRevision: revision, idempotencyKey, reason: { code: "schedule_removed", note: "Removed from Plan workspace" } });
+      await applyRecordLifecycle(milestone.projectId, "milestone", milestoneId, { action: "trash", expectedProjectRevision: revision, idempotencyKey, reason: { code: "schedule_removed", note: "Removed from Plan workspace" }, previewToken: preview.previewToken, confirmed: true });
+      await reloadAfterLifecycleAction();
+      setProjectNotice("Milestone moved to Trash. Undo is available from Archive & Trash.");
     } catch (error) {
       setProjectError(getFirestorePermissionMessage(error));
       throw error;
@@ -1165,15 +1182,13 @@ function AppShell() {
     const task = dependency ? projectState.tasks.find((item) => item.id === dependency.taskId) : undefined;
 
     try {
-      await deleteTaskDependencyInFirestore(dependencyId, task?.projectId);
-      const event = task ? await logScheduleActivity(task.projectId, "Deleted task dependency.", { dependencyId }) : null;
-      setProjectState((current) => ({
-        ...current,
-        ...(task ? withLocalProjectRevision(current, task.projectId) : {}),
-        taskDependencies: current.taskDependencies.filter((item) => item.id !== dependencyId),
-        activityEvents: event ? [...current.activityEvents, event] : current.activityEvents
-      }));
-      setProjectNotice("Dependency deleted.");
+      if (!task) throw new Error("Dependency task was not found.");
+      const revision = projectState.projects.find((project) => project.id === task.projectId)?.revision ?? 1;
+      const idempotencyKey = crypto.randomUUID();
+      const preview = await previewRecordLifecycle(task.projectId, "taskDependency", dependencyId, { action: "remove", expectedProjectRevision: revision, idempotencyKey, reason: { code: "schedule_removed", note: "Removed from Dependency Manager" } });
+      await applyRecordLifecycle(task.projectId, "taskDependency", dependencyId, { action: "remove", expectedProjectRevision: revision, idempotencyKey, reason: { code: "schedule_removed", note: "Removed from Dependency Manager" }, previewToken: preview.previewToken, confirmed: true });
+      await reloadAfterLifecycleAction();
+      setProjectNotice("Dependency removed. Undo is available from Archive & Trash.");
     } catch (error) {
       setProjectError(getFirestorePermissionMessage(error));
       throw error;
@@ -1311,6 +1326,33 @@ function AppShell() {
     setProjectNotice("Project update completed.");
   }
 
+  async function reloadAfterLifecycleAction() {
+    if (!user) return;
+    const state = await loadProjectStateFromFirestore(user);
+    syncProjectState(state);
+    const nextActive = state.projects.filter(isLifecycleActive);
+    const currentStillActive = nextActive.some((project) => project.id === selectedProjectId);
+    if (!currentStillActive) {
+      const nextId = nextActive[0]?.id ?? "";
+      setSelectedProjectId(nextId);
+      saveSelectedProjectId(nextId);
+      navigate("/projects", { replace: true });
+    }
+    setProjectNotice("Record lifecycle action applied.");
+  }
+
+  async function addProjectMember(userId: string, projectRole: ProjectMember["role"]) {
+    if (!selectedProject || !manageable) throw new Error("Project membership permission denied.");
+    await addProjectMemberInFirestore(selectedProject.id, userId, projectRole);
+    await reloadAfterLifecycleAction();
+  }
+
+  async function changeProjectMemberRole(userId: string, projectRole: ProjectMember["role"]) {
+    if (!selectedProject || !manageable) throw new Error("Project membership permission denied.");
+    await updateProjectMemberRoleInFirestore(selectedProject.id, userId, projectRole);
+    await reloadAfterLifecycleAction();
+  }
+
   async function exportProject(projectId: string) {
     if (!manageable) {
       setProjectError("Your Firestore profile role does not allow exporting this project.");
@@ -1428,7 +1470,10 @@ function AppShell() {
       setShowNewTaskForm(false);
       navigate(buildProjectPath(projectId, activeProjectTab));
     },
-    onNewTask: () => setShowNewTaskForm(true)
+    onNewTask: () => setShowNewTaskForm(true),
+    onLifecycleApplied: reloadAfterLifecycleAction,
+    onAddProjectMember: addProjectMember,
+    onChangeProjectMemberRole: changeProjectMemberRole
   };
 
   if (projectLoading) {
@@ -1518,7 +1563,7 @@ function AppShell() {
               <GlobalSearchResults
                 query={searchQuery}
                 tasks={selectedProject ? projectTasks : []}
-                documents={selectedProject ? projectState.documents.filter((document) => document.projectId === selectedProject.id) : []}
+                documents={selectedProject ? projectState.documents.filter((document) => document.projectId === selectedProject.id && isLifecycleActive(document)) : []}
                 users={projectState.users}
                 onOpenTask={setSelectedTaskId}
               />
@@ -1545,7 +1590,7 @@ function AppShell() {
               <GlobalSearchResults
                 query={searchQuery}
                 tasks={projectTasks}
-                documents={projectState.documents.filter((document) => document.projectId === selectedProject?.id)}
+                documents={projectState.documents.filter((document) => document.projectId === selectedProject?.id && isLifecycleActive(document))}
                 users={projectState.users}
                 onOpenTask={setSelectedTaskId}
               />
@@ -1576,6 +1621,7 @@ function AppShell() {
           onClose={() => setSelectedTaskId(undefined)}
           onUpdateTask={updateTask}
           onAddComment={addTaskComment}
+          lifecycleActions={canEditCurrentTask(selectedTask) && selectedProject ? <RecordActionsMenu actions={["trash"]} entityId={selectedTask.id} entityType="task" label={selectedTask.title} lifecycle={selectedTask.lifecycle} onApplied={reloadAfterLifecycleAction} projectId={selectedTask.projectId} projectRevision={selectedProject.revision ?? 1} role={role} /> : null}
         />
       ) : null}
     </div>
