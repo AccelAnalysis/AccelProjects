@@ -12,11 +12,171 @@ import {
   getPaymentLogsForOrder,
   getSmsLogs,
   getSmsLogsForOrder,
+  grantPortalProjectAccess,
+  listPortalUsers,
+  revokePortalProjectAccess,
+  savePortalUser,
   sendTwilioOrderReceivedSms
 } from "../data/api";
-import type { EmailLog, Order, PaymentLog, SmsLog } from "../types";
+import type { EmailLog, Order, PaymentLog, PortalUser, ProjectState, SmsLog } from "../types";
 
-export function AdminPage() {
+function PortalAccessAdmin({ projectState }: { projectState?: ProjectState }) {
+  const [portalUsers, setPortalUsers] = useState<PortalUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [message, setMessage] = useState("");
+  const clientUsers = projectState?.users.filter((user) => user.role === "client") ?? [];
+  const clientProjects = projectState?.projects.filter((project) => !selectedClientId || project.clientId === selectedClientId) ?? [];
+  const selectedUser = projectState?.users.find((user) => user.id === selectedUserId);
+
+  useEffect(() => {
+    listPortalUsers()
+      .then((result) => setPortalUsers(result.portalUsers))
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Portal users could not be loaded."));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUserId && clientUsers[0]) {
+      setSelectedUserId(clientUsers[0].id);
+      setSelectedClientId(projectState?.clients[0]?.id ?? "");
+    }
+  }, [clientUsers, projectState?.clients, selectedUserId]);
+
+  useEffect(() => {
+    if (!selectedProjectId && clientProjects[0]) {
+      setSelectedProjectId(clientProjects[0].id);
+    }
+  }, [clientProjects, selectedProjectId]);
+
+  async function configurePortalUser() {
+    if (!selectedUser || !selectedClientId) {
+      setMessage("Select a client user and client before enabling portal access.");
+      return;
+    }
+
+    try {
+      const result = await savePortalUser(selectedUser.id, {
+        clientId: selectedClientId,
+        displayName: selectedUser.name,
+        email: selectedUser.email,
+        status: "active"
+      });
+      setPortalUsers((current) => [result.portalUser, ...current.filter((user) => user.userId !== selectedUser.id)]);
+      setMessage(`Portal access enabled for ${selectedUser.email}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Portal user could not be saved.");
+    }
+  }
+
+  async function grantAccess() {
+    if (!selectedUserId || !selectedProjectId) {
+      setMessage("Select a portal user and project before granting access.");
+      return;
+    }
+
+    try {
+      await grantPortalProjectAccess(selectedUserId, selectedProjectId);
+      setMessage("Client portal project access granted.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Portal project access could not be granted.");
+    }
+  }
+
+  async function revokeAccess() {
+    if (!selectedUserId || !selectedProjectId) {
+      setMessage("Select a portal user and project before revoking access.");
+      return;
+    }
+
+    try {
+      await revokePortalProjectAccess(selectedUserId, selectedProjectId);
+      setMessage("Client portal project access revoked.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Portal project access could not be revoked.");
+    }
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2>Client Portal Access</h2>
+          <p>Configure explicit read-only portal users and project grants.</p>
+        </div>
+      </div>
+      <div className="form-grid">
+        <label>
+          Client user
+          <select value={selectedUserId} onChange={(event) => {
+            setSelectedUserId(event.target.value);
+          }}>
+            {clientUsers.map((user) => (
+              <option key={user.id} value={user.id}>{user.name} · {user.email}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Client
+          <select value={selectedClientId} onChange={(event) => {
+            setSelectedClientId(event.target.value);
+            setSelectedProjectId("");
+          }}>
+            {(projectState?.clients ?? []).map((client) => (
+              <option key={client.id} value={client.id}>{client.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Project grant
+          <select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}>
+            {clientProjects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="button-row">
+        <button className="action-button" type="button" onClick={() => void configurePortalUser()}>
+          Enable Portal User
+        </button>
+        <button className="secondary-button" type="button" onClick={() => void grantAccess()}>
+          Grant Project Access
+        </button>
+        <button className="secondary-button" type="button" onClick={() => void revokeAccess()}>
+          Revoke Project Access
+        </button>
+      </div>
+      {message ? <p className="muted">{message}</p> : null}
+      {portalUsers.length > 0 ? (
+        <div className="data-table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Client</th>
+                <th>Status</th>
+                <th>Last Login</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portalUsers.map((portalUser) => (
+                <tr key={portalUser.userId}>
+                  <td>{portalUser.displayName}<br /><small>{portalUser.email}</small></td>
+                  <td>{projectState?.clients.find((client) => client.id === portalUser.clientId)?.name ?? portalUser.clientId}</td>
+                  <td>{portalUser.status}</td>
+                  <td>{portalUser.lastPortalLoginAt || "Never"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function AdminPage({ projectState }: { projectState?: ProjectState }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
   const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
@@ -113,6 +273,7 @@ export function AdminPage() {
 
   return (
     <div className="page-stack">
+      <PortalAccessAdmin projectState={projectState} />
       <section className="metrics-grid">
         <div className="metric">
           <span>Total orders</span>

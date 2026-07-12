@@ -428,6 +428,18 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /portalUsers/{portalUserId} {
+        allow read, write: if false;
+
+        match /projectAccess/{projectId} {
+          allow read, write: if false;
+        }
+      }
+
+      match /portalProjects/{projectId} {
+        allow read, write: if false;
+      }
+
       match /projects/{projectId} {
         allow get: if canReadProject(organizationId, projectId);
         allow list: if canListProject(organizationId);
@@ -534,6 +546,10 @@ service cloud.firestore {
             allow read: if canReadProject(organizationId, projectId);
             allow create, update, delete: if false;
           }
+        }
+
+        match /reportPublications/{snapshotId} {
+          allow read, write: if false;
         }
 
         match /versions/{versionId} {

@@ -13,17 +13,17 @@ AccelProjects is a Firebase-backed internal project-management workspace. The or
 - Account settings for profile display name, avatar initials, read-only account metadata, access summary, password reset, and persisted notification preferences.
 - Manual project email composition with explicit confirmation, Microsoft Graph server-side sending, accepted/failed/unknown status recording, immutable delivery attempts, and project activity audit entries.
 - Manual Outlook calendar event creation, update, open-in-Outlook, and cancel flows associated with projects.
+- Secure read-only client portal access through server-authorized `/api/portal/*` routes, explicit portal-user and project grants, published project summaries, approved report publications, and client-safe PDF downloads.
 - Backend API authentication for application-data and provider-status routes using Firebase ID tokens.
 - CI quality gate for type-checking, unit/component/backend tests, Firestore rules tests, production build, and committed-file guard.
 
 ## Prototype Or Deferred Surfaces
 
-- Client portal data loading is not implemented. Production client-role users are not granted internal project access.
 - Role Preview and Client-Safe Preview are development/test-only UI aids, not authorization.
 - Notification preferences are stored, but automatic notification/email delivery is not active yet.
 - Microsoft Graph `202 Accepted` is recorded as accepted by Microsoft 365 for delivery, not delivered/read/received by the recipient.
-- Client-visible communication and calendar classifications are stored for future portal work, but client-role users still cannot access internal project communications or calendar records.
-- Report snapshot source fields and attachment references are reserved for Run 3. Non-empty attachment submissions are rejected in Run 2.
+- Client-visible communication and calendar classifications are stored for future portal expansion, but client-role users still cannot access internal project communications or calendar records.
+- Portal clients can view only published project summaries and published approved report snapshots. Client comments, approvals, decisions, change requests, notifications, and document exchange are deferred.
 - Recurring meetings and Teams meeting generation are not implemented.
 - Dependency-aware schedule recalculation is not implemented; dependencies are validated and rendered, but the Gantt does not run a scheduling engine.
 - Billing, Microsoft Graph email, Twilio SMS, Stripe checkout, and integration test tooling remain available for compatibility and development workflows, but test/demo controls are hidden from normal production navigation.
@@ -44,10 +44,13 @@ The real role in that document controls application permissions and Firestore ac
 - Contributors and viewers can read only projects where they are explicit members.
 - Contributors and viewers can read permitted internal communication/calendar history, but cannot send external project email or manage Outlook events.
 - Contributors can update only allowed fields on their assigned tasks.
-- Clients are blocked from the internal project workspace until a client-specific portal/data path exists.
+- Clients are blocked from the internal project workspace and routed to the read-only client portal.
+- Client portal access requires an active server-managed `portalUsers/{uid}` record, an active read-only `portalUsers/{uid}/projectAccess/{projectId}` grant, a published `portalProjects/{projectId}` summary, and published report-publication records for any visible approved report snapshots.
 - Self-service profile updates can change only display name, avatar initials, notification preferences, and updated timestamp.
 - Users cannot self-promote, change organization identity, edit another user, delete another user, or alter protected profile fields.
 - Organization document updates are admin-only and limited to supported fields.
+
+Client portal persistence paths are intentionally denied to browser Firestore clients, including admins. The Express API uses Firebase Admin SDK after checking Firebase ID tokens, organization roles, portal status, client identity, project grants, and publication status.
 
 Project membership documents are written with the user ID as the Firestore document ID for rule-checkable membership lookups. Legacy member documents whose document IDs are not user IDs should be audited and backfilled before relying on strict member-scoped access for those records.
 
@@ -249,11 +252,9 @@ Safety limits:
 
 ## Current Next Work
 
-- Run 3: client progress reports, print/PDF output, immutable report snapshots, approval, and approved PDF attachment delivery through the communication service.
-- Run 4: secure read-only client portal and approved report visibility using explicit server and Firestore authorization.
 - Run 5: client comments, approvals, decisions, change requests, notifications, and document exchange.
 - Add automatic notification delivery using the persisted preferences.
 - Add dependency-aware schedule recalculation when the scheduling model is ready.
 - Design restore/rollback workflows for historical revisions.
 
-Firestore rules for the Operational Readiness Gate 1 model have been deployed to the live Firebase project. Deploy updated rules again before live-testing the Run 2 communication/calendar collections.
+Firestore rules for the Operational Readiness Gate 1 model have been deployed to the live Firebase project. Deploy updated rules again before live-testing newly added portal collections in production.

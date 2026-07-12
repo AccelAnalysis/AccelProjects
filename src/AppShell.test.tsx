@@ -16,15 +16,19 @@ describe("App shell stabilization", () => {
   it("keeps the global top header on the sticky layout layer", () => {
     const css = readFileSync("src/styles.css", "utf8");
 
+    expect(css).toMatch(/--ap-layer-app-header:\s*80/);
+    expect(css).toMatch(/--ap-layer-popover:\s*120/);
+    expect(css).toMatch(/--ap-layer-drawer:\s*160/);
+    expect(css).toMatch(/--ap-layer-modal:\s*220/);
     expect(css).toMatch(/\.top-header\s*{[^}]*position:\s*sticky/s);
-    expect(css).toMatch(/\.top-header\s*{[^}]*z-index:\s*80/s);
+    expect(css).toMatch(/\.top-header\s*{[^}]*z-index:\s*var\(--ap-layer-app-header\)/s);
   });
 
   it("keeps Gantt hover states readable and sticky task columns above the timeline", () => {
     const css = readFileSync("src/styles.css", "utf8");
 
     expect(css).toMatch(/\.plan-task-bar:hover,[\s\S]*?opacity:\s*1/s);
-    expect(css).toMatch(/\.plan-hierarchy-header\s*{[^}]*z-index:\s*40/s);
+    expect(css).toMatch(/\.plan-hierarchy-header\s*{[^}]*z-index:\s*var\(--ap-layer-sticky-strong\)/s);
     expect(css).toMatch(/\.plan-hierarchy-row\s*{[^}]*background:\s*var\(--ap-surface\)/s);
     expect(css).toMatch(/\.plan-timeline-body,[\s\S]*?overflow:\s*hidden/s);
   });

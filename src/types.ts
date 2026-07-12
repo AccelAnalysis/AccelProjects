@@ -398,6 +398,10 @@ export type ClientReportSnapshot = {
   organizationId: string;
   projectId: string;
   reportId: string;
+  clientId?: string;
+  visibility?: "client_visible";
+  templateVersion?: string;
+  renderSchemaVersion?: string;
   title: string;
   reportingPeriodStart: string;
   reportingPeriodEnd: string;
@@ -435,6 +439,128 @@ export type ClientReportArtifact = {
   sha256: string;
   createdBy: string;
   createdAt: string;
+};
+
+export type PortalUser = {
+  id: string;
+  organizationId: string;
+  userId: string;
+  clientId: string;
+  email: string;
+  displayName: string;
+  status: "active" | "suspended" | "revoked";
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  lastPortalLoginAt: string | null;
+  revokedBy: string | null;
+  revokedAt: string | null;
+};
+
+export type PortalProjectAccess = {
+  id: string;
+  organizationId: string;
+  userId: string;
+  clientId: string;
+  projectId: string;
+  accessLevel: "read_only";
+  status: "active" | "revoked";
+  grantedBy: string;
+  grantedAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  revokedBy: string | null;
+  revokedAt: string | null;
+  expiresAt: string | null;
+};
+
+export type PortalProjectPublication = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  clientId: string;
+  publicationStatus: "published" | "withdrawn";
+  projectName: string;
+  clientFacingSummary: string;
+  health: "on_track" | "at_risk" | "blocked";
+  progressPercent: number;
+  targetDate: string;
+  currentPhaseLabel: string;
+  statusNarrative: string;
+  nextUpdateExpectedAt: string;
+  projectManagerName: string;
+  projectManagerEmail: string;
+  projectManagerPhone: string;
+  latestPublishedReportSnapshotId: string | null;
+  publishedBy: string;
+  publishedAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  withdrawnBy: string | null;
+  withdrawnAt: string | null;
+  visibility: "client_visible";
+};
+
+export type ReportPublication = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  clientId: string;
+  reportId: string;
+  snapshotId: string;
+  status: "published" | "withdrawn";
+  publishedBy: string;
+  publishedAt: string;
+  updatedAt: string;
+  withdrawnBy: string | null;
+  withdrawnAt: string | null;
+};
+
+export type PortalProjectCard = {
+  projectId: string;
+  projectName: string;
+  clientFacingSummary: string;
+  health: Project["health"];
+  progressPercent: number;
+  targetDate: string;
+  currentPhaseLabel: string;
+  statusNarrative: string;
+  nextUpdateExpectedAt: string;
+  projectManagerContact: { name: string; email: string; phone: string };
+  latestPublishedReportSnapshotId: string | null;
+  publishedAt: string;
+};
+
+export type PortalReportSummary = {
+  portalReportId: string;
+  title: string;
+  projectName: string;
+  clientName: string;
+  reportingPeriodStart: string;
+  reportingPeriodEnd: string;
+  approvedAt: string;
+  publishedAt: string;
+  pdfAvailable: boolean;
+};
+
+export type PortalReportItem = Omit<ClientReportItem, "id">;
+
+export type PortalReportSections = {
+  executiveSummary: string;
+  progressSummary: string;
+  nextSteps: string;
+  clientActions: string[];
+  highlights: string[];
+  risks: PortalReportItem[];
+  milestones: PortalReportItem[];
+  completedTasks: PortalReportItem[];
+  upcomingTasks: PortalReportItem[];
+};
+
+export type PortalReportDetail = PortalReportSummary & {
+  sections: PortalReportSections;
+  projectManagerContact: { name: string; email: string; phone: string };
 };
 
 export type ProjectVersion = {
@@ -520,5 +646,8 @@ export type ProjectState = {
   clientProgressReports: ClientProgressReport[];
   clientReportSnapshots: ClientReportSnapshot[];
   clientReportArtifacts: ClientReportArtifact[];
+  portalUsers?: PortalUser[];
+  portalProjects?: PortalProjectPublication[];
+  reportPublications?: ReportPublication[];
   projectVersions: ProjectVersion[];
 };

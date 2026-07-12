@@ -20,6 +20,15 @@
   --ap-shadow-floating: 0 18px 44px rgb(15 23 42 / 14%);
   --ap-row-height: 48px;
   --ap-header-height: 54px;
+  /* Floating layer scale: content < sticky headers < app header < popovers < drawers < modals < alerts. */
+  --ap-layer-content: 1;
+  --ap-layer-sticky: 30;
+  --ap-layer-sticky-strong: 40;
+  --ap-layer-app-header: 80;
+  --ap-layer-popover: 120;
+  --ap-layer-drawer: 160;
+  --ap-layer-modal: 220;
+  --ap-layer-alert: 260;
   --ap-speed: 160ms;
   background: var(--ap-bg);
   color: var(--ap-text);
@@ -400,7 +409,7 @@ button {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  z-index: 8;
+  z-index: var(--ap-layer-popover);
 }
 
 .project-actions-popover button {
@@ -1370,7 +1379,7 @@ button:disabled {
   justify-content: space-between;
   left: 0;
   padding: 0 12px;
-  z-index: 8;
+  z-index: var(--ap-layer-sticky-strong);
 }
 
 .plan-timeline-header {
@@ -1943,7 +1952,7 @@ textarea:focus {
   top: 0;
   bottom: 0;
   width: min(440px, 100vw);
-  z-index: 10;
+  z-index: var(--ap-layer-drawer);
 }
 
 .detail-panel-header {
@@ -2084,7 +2093,7 @@ td span {
   padding: 24px;
   place-items: center;
   position: fixed;
-  z-index: 80;
+  z-index: var(--ap-layer-modal);
 }
 
 .modal-panel {
@@ -2272,7 +2281,7 @@ td span {
   gap: 8px;
   padding: 10px 12px;
   position: relative;
-  z-index: 9;
+  z-index: var(--ap-layer-sticky);
 }
 
 .plan-toolbar-row {
@@ -2336,7 +2345,7 @@ td span {
   position: absolute;
   right: 12px;
   top: calc(100% + 6px);
-  z-index: 20;
+  z-index: var(--ap-layer-popover);
 }
 
 .plan-filter-drawer {
@@ -2420,7 +2429,7 @@ td span {
   padding: 8px 10px;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--ap-layer-sticky);
 }
 
 .plan-grid-scroll {
@@ -2492,6 +2501,9 @@ td span {
   color: #475569;
   font-size: 0.82rem;
   font-weight: 800;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2501,6 +2513,40 @@ td span {
   padding: 5px 7px;
   text-align: center;
   white-space: nowrap;
+}
+
+.plan-hierarchy-row .status-badge.compact {
+  max-width: 100%;
+  min-width: 104px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plan-row-type-icon {
+  color: var(--ap-danger);
+  justify-self: center;
+}
+
+.milestone-title {
+  font-weight: 800;
+  min-width: 0;
+}
+
+.milestone-type-cell,
+.milestone-date-cell,
+.milestone-status-cell {
+  color: var(--ap-text-muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.milestone-status-cell {
+  color: var(--ap-text);
+  text-transform: capitalize;
 }
 
 .plan-task-bar {
@@ -2595,7 +2641,7 @@ td span {
   background: var(--ap-surface);
   position: sticky;
   top: 0;
-  z-index: 80;
+  z-index: var(--ap-layer-app-header);
 }
 
 .profile-menu-anchor {
@@ -2630,7 +2676,7 @@ td span {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  z-index: 100;
+  z-index: var(--ap-layer-popover);
 }
 
 .profile-menu-summary {
@@ -2715,7 +2761,7 @@ td span {
   padding: 8px;
   position: absolute;
   top: calc(100% + 8px);
-  z-index: 90;
+  z-index: var(--ap-layer-popover);
 }
 
 .project-switcher-popover button {
@@ -2788,7 +2834,7 @@ td span {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  z-index: 70;
+  z-index: var(--ap-layer-popover);
 }
 
 .plan-grid-scroll.hierarchy-collapsed .plan-grid {
@@ -2855,16 +2901,16 @@ td span {
 .plan-hierarchy-header,
 .plan-hierarchy-body {
   background: var(--ap-surface);
-  z-index: 30;
+  z-index: var(--ap-layer-sticky);
 }
 
 .plan-hierarchy-header {
-  z-index: 40;
+  z-index: var(--ap-layer-sticky-strong);
 }
 
 .plan-hierarchy-row {
   background: var(--ap-surface);
-  z-index: 31;
+  z-index: calc(var(--ap-layer-sticky) + 1);
 }
 
 .plan-hierarchy-row.row-phase,
@@ -3164,7 +3210,7 @@ td span {
 .detail-panel,
 .schedule-dialog {
   top: var(--ap-header-height);
-  z-index: 60;
+  z-index: var(--ap-layer-drawer);
 }
 
 @keyframes disclosure-in {
@@ -3418,7 +3464,7 @@ summary:focus-visible {
 .plan-panel {
   border-color: var(--ap-border);
   border-radius: var(--ap-radius-lg);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .plan-workbench {
@@ -3458,6 +3504,7 @@ summary:focus-visible {
   background: var(--ap-surface);
   border-bottom-color: var(--ap-border);
   padding: 8px 12px;
+  z-index: var(--ap-layer-sticky);
 }
 
 .plan-toolbar-row {
@@ -3478,6 +3525,9 @@ summary:focus-visible {
   border-color: var(--ap-border);
   border-radius: var(--ap-radius-lg);
   box-shadow: var(--ap-shadow-floating);
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  z-index: var(--ap-layer-popover);
 }
 
 .plan-status,
@@ -3491,6 +3541,7 @@ summary:focus-visible {
   border-color: var(--ap-border);
   border-radius: var(--ap-radius-lg);
   box-shadow: none;
+  z-index: var(--ap-layer-sticky);
 }
 
 .plan-grid-scroll {
@@ -3532,7 +3583,7 @@ summary:focus-visible {
 }
 
 .plan-hierarchy-row {
-  grid-template-columns: 24px minmax(180px, 1fr) 50px 112px 104px;
+  grid-template-columns: 24px minmax(180px, 1fr) 58px 122px 132px;
 }
 
 .plan-hierarchy-row.row-phase,
@@ -3554,15 +3605,44 @@ summary:focus-visible {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plan-timeline-body {
   background-color: var(--ap-surface);
-  background-image: linear-gradient(to right, #edf2f7 1px, transparent 1px);
+  background-image: var(--timeline-grid-lines, none);
+  background-size: auto;
 }
 
 .plan-header-tick {
   border-left-color: var(--ap-border);
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-header-tick.minor {
+  align-items: end;
+  bottom: 0;
+  height: 44%;
+  line-height: 1;
+  padding-bottom: 6px;
+}
+
+.plan-header-tick.major {
+  align-items: start;
+  height: 56%;
+  line-height: 1.1;
+  padding-top: 6px;
+  top: 0;
+}
+
+.plan-header-tick.unlabeled {
+  color: transparent;
+  padding-left: 0;
 }
 
 .plan-phase-bar {
@@ -3599,6 +3679,8 @@ summary:focus-visible {
 .schedule-dialog {
   border-left-color: var(--ap-border);
   box-shadow: var(--ap-shadow-floating);
+  top: 0;
+  z-index: var(--ap-layer-drawer);
 }
 
 .home-command-center {
@@ -3760,6 +3842,247 @@ summary:focus-visible {
   padding: 12px;
 }
 
+.portal-shell {
+  background: var(--ap-bg);
+  color: var(--ap-text);
+  min-height: 100vh;
+}
+
+.portal-header {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--ap-border);
+  display: flex;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 10px 24px;
+  position: sticky;
+  top: 0;
+  z-index: var(--ap-layer-app-header);
+}
+
+.portal-brand {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 10px;
+  padding: 0;
+  text-align: left;
+}
+
+.portal-brand img {
+  height: 32px;
+  width: auto;
+}
+
+.portal-brand span {
+  display: grid;
+  gap: 1px;
+}
+
+.portal-brand small,
+.portal-hero p,
+.portal-hero span,
+.portal-report-title p,
+.portal-project-card small,
+.portal-project-card > span:not(.status-badge):not(.portal-progress-track),
+.portal-report-row small,
+.portal-summary-panel dt,
+.portal-report-section li span {
+  color: var(--ap-muted);
+}
+
+.portal-content {
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: 28px;
+}
+
+.portal-hero,
+.portal-empty,
+.portal-alert,
+.portal-summary-panel,
+.portal-report-detail {
+  background: var(--ap-surface);
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.portal-hero {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.portal-hero.compact {
+  margin-bottom: 0;
+}
+
+.portal-hero h1,
+.portal-empty h1,
+.portal-alert h1 {
+  font-size: 1.75rem;
+  margin: 0;
+}
+
+.portal-project-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.portal-project-card {
+  align-items: start;
+  background: var(--ap-surface);
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  padding: 18px;
+  text-align: left;
+}
+
+.portal-project-card:hover,
+.portal-project-card:focus-visible,
+.portal-report-row:hover,
+.portal-report-row:focus-visible {
+  border-color: var(--ap-primary);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.12);
+  outline: 0;
+}
+
+.portal-project-card strong {
+  font-size: 1.05rem;
+}
+
+.portal-progress-track {
+  background: var(--ap-surface-muted);
+  border-radius: 999px;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.portal-progress-track span {
+  background: var(--ap-primary);
+  display: block;
+  height: 100%;
+}
+
+.portal-workspace,
+.portal-summary-panel,
+.portal-report-detail,
+.portal-report-sections {
+  display: grid;
+  gap: 16px;
+}
+
+.portal-summary-panel h2,
+.portal-report-title h2,
+.portal-report-section h3 {
+  margin: 0;
+}
+
+.portal-summary-panel dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.portal-summary-panel dt {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.portal-summary-panel dd {
+  font-weight: 700;
+  margin: 2px 0 0;
+}
+
+.portal-report-list {
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.portal-report-row {
+  align-items: center;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid var(--ap-border);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 14px 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.portal-report-row:last-child {
+  border-bottom: 0;
+}
+
+.portal-report-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.portal-report-title {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.portal-report-section {
+  border-top: 1px solid var(--ap-border);
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.portal-report-section ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.portal-report-section li {
+  background: var(--ap-surface-muted);
+  border: 1px solid var(--ap-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+
+.portal-empty,
+.portal-alert {
+  display: grid;
+  gap: 8px;
+  margin: 36px auto;
+  max-width: 720px;
+  text-align: center;
+}
+
+.portal-alert {
+  border-color: var(--ap-danger-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -3870,18 +4193,30 @@ summary:focus-visible {
   }
 
   .plan-hierarchy-header {
-    grid-template-columns: minmax(190px, 1fr) 52px 10px;
+    grid-template-columns: minmax(190px, 1fr) 132px 10px;
   }
 
+  .plan-hierarchy-header span:nth-of-type(2),
   .plan-hierarchy-header span:nth-of-type(3),
-  .plan-hierarchy-header span:nth-of-type(4),
   .date-range-text,
-  .status-badge.compact {
+  .owner-pill,
+  .milestone-type-cell,
+  .milestone-date-cell {
     display: none;
   }
 
   .plan-hierarchy-row {
-    grid-template-columns: 24px minmax(180px, 1fr) 48px;
+    grid-template-columns: 24px minmax(180px, 1fr) 132px;
+  }
+
+  .plan-hierarchy-row.row-milestone {
+    grid-template-columns: 24px minmax(180px, 1fr) 132px;
+  }
+
+  .milestone-status-cell,
+  .plan-hierarchy-row .status-badge.compact {
+    min-width: 0;
+    width: 100%;
   }
 }
 

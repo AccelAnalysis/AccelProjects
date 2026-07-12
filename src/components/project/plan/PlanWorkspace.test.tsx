@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Milestone, Phase, Project, Task, TaskDependency, User } from "../../../types";
 import { todayDateOnly } from "../../../utils/dateOnly";
+import { calculateScheduleRange } from "../../../utils/scheduleRange";
+import { createTimelineScale, generateTimelineHeaderTicks } from "../../../scheduling/timelineScale";
 import { planRowHeight, PlanWorkspace } from "./PlanWorkspace";
 
 class TestResizeObserver {
@@ -72,6 +74,30 @@ describe("PlanWorkspace rendered regressions", () => {
     expect(gridScroll).toHaveAttribute("data-plan-row-height", String(planRowHeight));
     expect(hierarchyBody?.style.height).toBe(timelineBody?.style.height);
     expect(container.querySelectorAll(".plan-hierarchy-row")).toHaveLength(container.querySelectorAll(".plan-timeline-row").length);
+  });
+
+  it("renders milestone rows with explicit aligned cells", () => {
+    const { container } = renderPlan();
+    const milestoneRow = screen.getByRole("row", { name: /Kickoff/ });
+
+    expect(within(milestoneRow).getByText("Kickoff")).toHaveClass("milestone-title");
+    expect(within(milestoneRow).getByText("Milestone")).toHaveClass("milestone-type-cell");
+    expect(within(milestoneRow).getByText("Feb 14")).toHaveClass("milestone-date-cell");
+    expect(within(milestoneRow).getByText("planned")).toHaveClass("milestone-status-cell");
+    expect(container.querySelector<HTMLElement>(".plan-timeline-body")?.style.getPropertyValue("--timeline-grid-lines")).toContain("linear-gradient");
+  });
+
+  it("uses density-aware timeline ticks and suppresses unreadable minor labels", () => {
+    const range = calculateScheduleRange(project, [phase], [firstTask, secondTask], [milestone]);
+    const dayScale = createTimelineScale("day", range, 360);
+    const weekScale = createTimelineScale("week", range, 360);
+    const dayTicks = generateTimelineHeaderTicks(range, dayScale);
+    const weekTicks = generateTimelineHeaderTicks(range, weekScale);
+
+    expect(dayTicks.filter((tick) => tick.level === "minor").every((tick) => tick.widthPx > 0)).toBe(true);
+    expect(dayTicks.some((tick) => tick.level === "major" && tick.visible)).toBe(true);
+    expect(weekTicks.filter((tick) => tick.level === "minor" && !tick.visible).length).toBeGreaterThan(0);
+    expect(weekTicks.filter((tick) => tick.level === "major").every((tick) => tick.visible)).toBe(true);
   });
 
   it("uses filter disclosure with human-readable chips", async () => {

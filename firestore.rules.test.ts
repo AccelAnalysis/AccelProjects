@@ -109,6 +109,22 @@ function reportArtifactRef(uid: string, reportId = "report_1", id = "artifact_1"
   return doc(dbFor(uid), ...orgPath("projects", projectId, "reports", reportId, "artifacts", id));
 }
 
+function portalUserRef(uid: string, portalUserId = "client") {
+  return doc(dbFor(uid), ...orgPath("portalUsers", portalUserId));
+}
+
+function portalProjectAccessRef(uid: string, portalUserId = "client", accessProjectId = projectId) {
+  return doc(dbFor(uid), ...orgPath("portalUsers", portalUserId, "projectAccess", accessProjectId));
+}
+
+function portalProjectRef(uid: string, id = projectId) {
+  return doc(dbFor(uid), ...orgPath("portalProjects", id));
+}
+
+function reportPublicationRef(uid: string, id = "snapshot_1") {
+  return doc(dbFor(uid), ...orgPath("projects", projectId, "reportPublications", id));
+}
+
 function communicationDraft(id: string, actorId: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
@@ -380,6 +396,53 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(setDoc(reportSnapshotRef("owner_pm", "report_1", "snapshot_2"), { id: "snapshot_2", projectId, reportId: "report_1", contentHash: "forged" }));
     await assertFails(updateDoc(reportSnapshotRef("owner_pm"), { contentHash: "changed" }));
     await assertFails(setDoc(reportArtifactRef("owner_pm", "report_1", "artifact_2"), { id: "artifact_2", projectId, reportId: "report_1", snapshotId: "snapshot_1" }));
+  });
+
+  it("keeps client portal persistence paths server-only from browser Firestore clients", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, ...orgPath("portalUsers", "client")), {
+        id: "client",
+        organizationId: orgId,
+        userId: "client",
+        clientId: "client_1",
+        status: "active"
+      });
+      await setDoc(doc(db, ...orgPath("portalUsers", "client", "projectAccess", projectId)), {
+        id: projectId,
+        userId: "client",
+        projectId,
+        clientId: "client_1",
+        accessLevel: "read_only",
+        status: "active"
+      });
+      await setDoc(doc(db, ...orgPath("portalProjects", projectId)), {
+        id: projectId,
+        organizationId: orgId,
+        projectId,
+        clientId: "client_1",
+        publicationStatus: "published",
+        visibility: "client_visible"
+      });
+      await setDoc(doc(db, ...orgPath("projects", projectId, "reportPublications", "snapshot_1")), {
+        id: "snapshot_1",
+        organizationId: orgId,
+        projectId,
+        clientId: "client_1",
+        snapshotId: "snapshot_1",
+        status: "published"
+      });
+    });
+
+    for (const uid of ["admin", "owner_pm", "client"]) {
+      await assertFails(getDoc(portalUserRef(uid)));
+      await assertFails(getDoc(portalProjectAccessRef(uid)));
+      await assertFails(getDoc(portalProjectRef(uid)));
+      await assertFails(getDoc(reportPublicationRef(uid)));
+      await assertFails(setDoc(portalUserRef(uid, `portal_${uid}`), { id: `portal_${uid}`, userId: uid, status: "active" }));
+      await assertFails(setDoc(portalProjectRef(uid, `portal_project_${uid}`), { id: `portal_project_${uid}`, projectId, status: "published" }));
+      await assertFails(setDoc(reportPublicationRef(uid, `snapshot_${uid}`), { id: `snapshot_${uid}`, projectId, status: "published" }));
+    }
   });
 
   it("keeps unknown project communication paths denied by default", async () => {

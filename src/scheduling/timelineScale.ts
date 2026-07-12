@@ -15,7 +15,9 @@ export type TimelineHeaderTick = {
   date: string;
   label: string;
   positionPx: number;
+  widthPx: number;
   level: "major" | "minor";
+  visible: boolean;
 };
 
 const zoomPixelsPerDay: Record<Exclude<TimelineZoomMode, "fit">, number> = {
@@ -63,7 +65,7 @@ export function xToDate(x: number, range: ScheduleRange, scale: TimelineScale) {
 export function generateTimelineHeaderTicks(range: ScheduleRange, scale: TimelineScale): TimelineHeaderTick[] {
   const ticks: TimelineHeaderTick[] = [];
   const totalDays = Math.max(range.totalDays, 1);
-  const minorStep = scale.mode === "hour" || scale.mode === "day"
+  const baseMinorStep = scale.mode === "hour" || scale.mode === "day"
     ? 1
     : scale.mode === "week" || scale.mode === "fit"
       ? 7
@@ -76,17 +78,27 @@ export function generateTimelineHeaderTicks(range: ScheduleRange, scale: Timelin
             : scale.mode === "decade"
               ? 3650
               : 36500;
-  const minorLabelOptions: Intl.DateTimeFormatOptions = scale.mode === "hour" || scale.mode === "day" || scale.mode === "week"
-    ? { month: "short", day: "numeric" }
-    : { month: "short", year: "numeric" };
+  const minimumMinorLabelWidth = scale.mode === "day" ? 28 : scale.mode === "week" || scale.mode === "fit" ? 52 : 58;
+  const minorLabelInterval = Math.max(1, Math.ceil(minimumMinorLabelWidth / Math.max(baseMinorStep * scale.pixelsPerDay, 1)));
+  const minorLabelOptions: Intl.DateTimeFormatOptions = scale.mode === "hour" || scale.mode === "day"
+    ? { day: "numeric" }
+    : scale.mode === "week" || scale.mode === "fit"
+      ? { month: "short", day: "numeric" }
+      : scale.mode === "month" || scale.mode === "quarter"
+        ? { month: "short" }
+        : { year: "numeric" };
 
-  for (let day = 0; day <= totalDays; day += minorStep) {
+  for (let day = 0, index = 0; day <= totalDays; day += baseMinorStep, index += 1) {
     const date = addDays(range.startDate, day);
+    const nextDay = Math.min(totalDays + 1, day + baseMinorStep);
+    const visible = index % minorLabelInterval === 0;
     ticks.push({
       date,
       label: formatDateOnly(date, minorLabelOptions),
       positionPx: dateToX(date, range, scale),
-      level: "minor"
+      widthPx: Math.max(1, (nextDay - day) * scale.pixelsPerDay),
+      level: "minor",
+      visible
     });
   }
 
@@ -100,9 +112,11 @@ export function generateTimelineHeaderTicks(range: ScheduleRange, scale: Timelin
       if (date >= range.startDate) {
         ticks.push({
           date,
-          label: formatDateOnly(date, { month: "long", year: "numeric" }),
+          label: formatDateOnly(date, scale.mode === "day" || scale.mode === "week" || scale.mode === "fit" || scale.mode === "month" ? { month: "long", year: "numeric" } : { year: "numeric" }),
           positionPx: dateToX(date, range, scale),
-          level: "major"
+          widthPx: Math.max(1, daysBetween(date, addMonths(date, majorMonthStep(scale.mode))) * scale.pixelsPerDay),
+          level: "major",
+          visible: true
         });
       }
       cursor.setUTCMonth(cursor.getUTCMonth() + majorMonthStep(scale.mode));
@@ -114,7 +128,9 @@ export function generateTimelineHeaderTicks(range: ScheduleRange, scale: Timelin
       date: range.endDate,
       label: formatDateOnly(range.endDate),
       positionPx: dateToX(range.endDate, range, scale),
-      level: "minor"
+      widthPx: Math.max(1, baseMinorStep * scale.pixelsPerDay),
+      level: "minor",
+      visible: scale.pixelsPerDay >= 24
     });
   }
 
