@@ -25,6 +25,7 @@ import { auth } from "./firebase";
 import { LoginPage } from "./auth/LoginPage";
 import { AdminPage } from "./pages/AdminPage";
 import { CustomerOrderPage } from "./pages/CustomerOrderPage";
+import { ClientPortalPage } from "./pages/ClientPortalPage";
 import { HomePage } from "./pages/HomePage";
 import {
   ClientsPage,
@@ -371,7 +372,7 @@ function getRoute(props: ProjectPageProps, pathname: string) {
   }
 
   if (path === "/admin") {
-    return developmentToolsEnabled ? <AdminPage /> : <UnavailablePage title="Operations Dashboard unavailable" description="The operations dashboard is available only to administrators in development tooling mode." />;
+    return developmentToolsEnabled ? <AdminPage projectState={props.projectState} /> : <UnavailablePage title="Operations Dashboard unavailable" description="The operations dashboard is available only to administrators in development tooling mode." />;
   }
 
   if (path === "/test") {
@@ -1432,42 +1433,24 @@ function AppShell() {
 
   if (projectLoading) {
     return (
-      <div className="app-shell">
-        <GlobalNavigation
-          pathname={pathname}
-          primaryItems={primaryNavItems}
-          utilityItems={visibleUtilityNavItems}
-          collapsed={globalNavCollapsed}
-          brandLogo={accelLogo}
-          onCollapsedChange={setGlobalNavCollapsed}
-          onNavigate={navigate}
-        />
-        <div className="main-shell">
-          <TopHeader
-            user={user}
-            role={role}
-            profileRole={profileRole}
-            userProfile={userProfile}
-            adminPreviewRole={adminPreviewRole}
-            adminPreviewAvailable={adminPreviewAvailable}
-            onAdminPreviewRoleChange={setAdminPreviewRole}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            onNavigate={navigate}
-            onLogout={() => void logout()}
-          />
-          <main className="content-area">
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h1>Loading project data</h1>
-                  <p>Loading AccelProjects data from Firestore.</p>
-                </div>
-              </div>
-            </section>
-          </main>
-        </div>
-      </div>
+      <main className="login-shell">
+        <section className="login-panel">
+          <h1>Loading AccelProjects</h1>
+          <p>Loading your account profile and workspace access.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (profileRole === "client") {
+    return (
+      <ClientPortalPage
+        firebaseUser={authenticatedUser}
+        userProfile={userProfile}
+        pathname={pathname}
+        onNavigate={navigate}
+        onLogout={() => void logout()}
+      />
     );
   }
 

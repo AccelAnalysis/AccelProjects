@@ -196,7 +196,7 @@ export async function renderReportPdfBuffer(snapshot) {
     doc.fontSize(18).fillColor("#0f172a").text(snapshot.title);
     doc.moveDown(0.25).fontSize(10).fillColor("#64748b").text(`${snapshot.project.name} · ${snapshot.client.name}`);
     doc.text(`${snapshot.reportingPeriodStart} to ${snapshot.reportingPeriodEnd}`);
-    doc.text(`Approved ${snapshot.approvedAt} · Snapshot ${snapshot.id}`);
+    doc.text(`Approved ${snapshot.approvedAt}`);
     doc.moveDown(0.5).strokeColor("#cbd5e1").moveTo(48, doc.y).lineTo(564, doc.y).stroke();
 
     writePdfSection(doc, "Executive Summary", snapshot.sections.executiveSummary);
@@ -209,7 +209,6 @@ export async function renderReportPdfBuffer(snapshot) {
     writePdfSection(doc, "Client Actions", snapshot.sections.clientActions);
     writePdfSection(doc, "Next Steps", snapshot.sections.nextSteps);
 
-    doc.moveDown(1).fontSize(8).fillColor("#64748b").text(`Content hash: ${snapshot.contentHash}`);
     doc.end();
   });
 }
@@ -347,6 +346,10 @@ export async function approveReport(projectId, reportId, actor, { database = fir
       organizationId: API_ORGANIZATION_ID,
       projectId,
       reportId,
+      clientId: project.clientId,
+      visibility: "client_visible",
+      templateVersion: "client-progress-report.v1",
+      renderSchemaVersion: "2026-07",
       title: content.title,
       reportingPeriodStart: content.reportingPeriodStart,
       reportingPeriodEnd: content.reportingPeriodEnd,

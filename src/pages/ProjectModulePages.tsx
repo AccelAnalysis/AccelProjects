@@ -22,10 +22,15 @@ import {
   createClientProgressReport,
   downloadClientReportPdf,
   emailClientReportSnapshot,
+  previewPortalProjectPublication,
+  publishPortalProject,
+  publishReportToPortal,
   sendProjectCommunication,
   submitClientProgressReport,
   updateClientProgressReport,
   updateProjectCalendarEvent,
+  withdrawPortalProject,
+  withdrawReportFromPortal,
   type ClientReportInput,
   type ProjectCalendarEventInput,
   type ProjectCommunicationInput
@@ -1013,6 +1018,32 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
     }
   }
 
+  async function publishSnapshot(snapshotId: string) {
+    setWorking(true);
+    setError("");
+    try {
+      await publishReportToPortal(selectedProjectId, snapshotId);
+      setNotice("Approved report snapshot published to the client portal.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report snapshot could not be published to the portal.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function withdrawSnapshot(snapshotId: string) {
+    setWorking(true);
+    setError("");
+    try {
+      await withdrawReportFromPortal(selectedProjectId, snapshotId);
+      setNotice("Report snapshot withdrawn from the client portal.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Report snapshot could not be withdrawn from the portal.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   function openEmail(report: ClientProgressReport, snapshotId: string) {
     setEmailSnapshotId(snapshotId);
     setEmailForm({
@@ -1090,7 +1121,13 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
                     <>
                       <button className="secondary-button compact-button" type="button" onClick={() => void downloadPdf(report, snapshotId)} disabled={working}>PDF</button>
                       <button className="secondary-button compact-button" type="button" onClick={() => onNavigate(`/projects/${selectedProjectId}/reports/${report.id}/print/${snapshotId}`)}>Print</button>
-                      {canManageReports ? <button className="secondary-button compact-button" type="button" onClick={() => openEmail(report, snapshotId)} disabled={working}>Email</button> : null}
+                      {canManageReports ? (
+                        <>
+                          <button className="secondary-button compact-button" type="button" onClick={() => void publishSnapshot(snapshotId)} disabled={working}>Publish Portal</button>
+                          <button className="secondary-button compact-button" type="button" onClick={() => void withdrawSnapshot(snapshotId)} disabled={working}>Withdraw Portal</button>
+                          <button className="secondary-button compact-button" type="button" onClick={() => openEmail(report, snapshotId)} disabled={working}>Email</button>
+                        </>
+                      ) : null}
                     </>
                   ) : null}
                 </div>
@@ -1328,9 +1365,62 @@ export function TeamPage({ projectState, selectedProjectId }: ProjectPageProps) 
 
 export function ProjectSettingsPage({ projectState, selectedProjectId, canManage, canViewInternal, onExportProject, onNavigate }: ProjectPageProps) {
   const { project, client, owner } = projectSlices(projectState, selectedProjectId);
+  const [portalNotice, setPortalNotice] = useState("");
+  const [portalError, setPortalError] = useState("");
+  const [portalWorking, setPortalWorking] = useState(false);
+  const [portalSummary, setPortalSummary] = useState(project?.summary ?? "");
+  const [portalStatusNarrative, setPortalStatusNarrative] = useState("");
+  const [portalNextUpdate, setPortalNextUpdate] = useState("");
 
   if (!project) {
     return <ProjectUnavailable />;
+  }
+  const currentProject = project;
+
+  async function previewPortalPublication() {
+    setPortalWorking(true);
+    setPortalError("");
+    try {
+      const result = await previewPortalProjectPublication(currentProject.id);
+      setPortalSummary(result.preview.clientFacingSummary);
+      setPortalStatusNarrative(result.preview.statusNarrative);
+      setPortalNextUpdate(result.preview.nextUpdateExpectedAt);
+      setPortalNotice("Portal preview loaded from current project data.");
+    } catch (error) {
+      setPortalError(error instanceof Error ? error.message : "Portal publication preview could not be loaded.");
+    } finally {
+      setPortalWorking(false);
+    }
+  }
+
+  async function publishPortalSummary() {
+    setPortalWorking(true);
+    setPortalError("");
+    try {
+      await publishPortalProject(currentProject.id, {
+        clientFacingSummary: portalSummary,
+        statusNarrative: portalStatusNarrative,
+        nextUpdateExpectedAt: portalNextUpdate
+      });
+      setPortalNotice("Project summary published to the client portal.");
+    } catch (error) {
+      setPortalError(error instanceof Error ? error.message : "Project summary could not be published to the portal.");
+    } finally {
+      setPortalWorking(false);
+    }
+  }
+
+  async function withdrawPortalSummary() {
+    setPortalWorking(true);
+    setPortalError("");
+    try {
+      await withdrawPortalProject(currentProject.id);
+      setPortalNotice("Project summary withdrawn from the client portal.");
+    } catch (error) {
+      setPortalError(error instanceof Error ? error.message : "Project summary could not be withdrawn from the portal.");
+    } finally {
+      setPortalWorking(false);
+    }
   }
 
   return (
@@ -1342,15 +1432,15 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
         </div>
         {canManage && canViewInternal ? (
           <div className="button-row">
-            <button className="secondary-button" type="button" onClick={() => void onExportProject(project.id)}>
+            <button className="secondary-button" type="button" onClick={() => void onExportProject(currentProject.id)}>
               <Download size={18} aria-hidden="true" />
               Export Project
             </button>
-            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectVersionHistoryPath(project.id))}>
+            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectVersionHistoryPath(currentProject.id))}>
               <History size={18} aria-hidden="true" />
               Version History
             </button>
-            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectUpdatePath(project.id))}>
+            <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectUpdatePath(currentProject.id))}>
               <Upload size={18} aria-hidden="true" />
               Update via File
             </button>
@@ -1359,14 +1449,14 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
       </div>
       <div className="form-grid readonly-grid">
         {[
-          ["Project name", project.name],
-          ["Summary", project.summary],
+          ["Project name", currentProject.name],
+          ["Summary", currentProject.summary],
           ["Client", client?.name ?? "Unavailable"],
           ["Owner", owner?.name ?? "No owner"],
-          ["Start date", project.startDate],
-          ["Target date", project.targetDate],
-          ["Health", project.health.replace("_", " ")],
-          ["Status", project.status]
+          ["Start date", currentProject.startDate],
+          ["Target date", currentProject.targetDate],
+          ["Health", currentProject.health.replace("_", " ")],
+          ["Status", currentProject.status]
         ].map(([label, value]) => (
           <label key={label}>
             {label}
@@ -1375,6 +1465,47 @@ export function ProjectSettingsPage({ projectState, selectedProjectId, canManage
         ))}
       </div>
       <p className="panel-note">Update via File applies a verified export back to this existing project. Portfolio Import New Project still creates a separate project.</p>
+      {canManage && canViewInternal ? (
+        <section className="settings-form portal-publication-panel" aria-labelledby="portal-publication-heading">
+          <div className="panel-header">
+            <div>
+              <h2 id="portal-publication-heading">Client Portal Publication</h2>
+              <p>Publish a read-only client summary for explicitly granted portal users.</p>
+            </div>
+          </div>
+          {portalNotice ? <p className="form-success" role="status">{portalNotice}</p> : null}
+          {portalError ? <p className="form-error" role="alert">{portalError}</p> : null}
+          <label>
+            Client-facing summary
+            <textarea rows={4} value={portalSummary} onChange={(event) => setPortalSummary(event.target.value)} />
+          </label>
+          <label>
+            Status narrative
+            <textarea rows={3} value={portalStatusNarrative} onChange={(event) => setPortalStatusNarrative(event.target.value)} placeholder="What should the client know about current progress?" />
+          </label>
+          <div className="form-grid two">
+            <label>
+              Next update expected
+              <input type="date" value={portalNextUpdate} onChange={(event) => setPortalNextUpdate(event.target.value)} />
+            </label>
+            <label>
+              Portal client
+              <input readOnly value={client?.name ?? currentProject.clientId} />
+            </label>
+          </div>
+          <div className="button-row">
+            <button className="secondary-button" type="button" onClick={() => void previewPortalPublication()} disabled={portalWorking}>
+              Preview Client Summary
+            </button>
+            <button className="action-button" type="button" onClick={() => void publishPortalSummary()} disabled={portalWorking}>
+              Publish to Portal
+            </button>
+            <button className="secondary-button" type="button" onClick={() => void withdrawPortalSummary()} disabled={portalWorking}>
+              Withdraw
+            </button>
+          </div>
+        </section>
+      ) : null}
     </section>
   );
 }

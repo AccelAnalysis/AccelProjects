@@ -3842,6 +3842,247 @@ summary:focus-visible {
   padding: 12px;
 }
 
+.portal-shell {
+  background: var(--ap-bg);
+  color: var(--ap-text);
+  min-height: 100vh;
+}
+
+.portal-header {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--ap-border);
+  display: flex;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 10px 24px;
+  position: sticky;
+  top: 0;
+  z-index: var(--ap-layer-app-header);
+}
+
+.portal-brand {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 10px;
+  padding: 0;
+  text-align: left;
+}
+
+.portal-brand img {
+  height: 32px;
+  width: auto;
+}
+
+.portal-brand span {
+  display: grid;
+  gap: 1px;
+}
+
+.portal-brand small,
+.portal-hero p,
+.portal-hero span,
+.portal-report-title p,
+.portal-project-card small,
+.portal-project-card > span:not(.status-badge):not(.portal-progress-track),
+.portal-report-row small,
+.portal-summary-panel dt,
+.portal-report-section li span {
+  color: var(--ap-muted);
+}
+
+.portal-content {
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: 28px;
+}
+
+.portal-hero,
+.portal-empty,
+.portal-alert,
+.portal-summary-panel,
+.portal-report-detail {
+  background: var(--ap-surface);
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  padding: 22px;
+}
+
+.portal-hero {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.portal-hero.compact {
+  margin-bottom: 0;
+}
+
+.portal-hero h1,
+.portal-empty h1,
+.portal-alert h1 {
+  font-size: 1.75rem;
+  margin: 0;
+}
+
+.portal-project-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.portal-project-card {
+  align-items: start;
+  background: var(--ap-surface);
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  padding: 18px;
+  text-align: left;
+}
+
+.portal-project-card:hover,
+.portal-project-card:focus-visible,
+.portal-report-row:hover,
+.portal-report-row:focus-visible {
+  border-color: var(--ap-primary);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.12);
+  outline: 0;
+}
+
+.portal-project-card strong {
+  font-size: 1.05rem;
+}
+
+.portal-progress-track {
+  background: var(--ap-surface-muted);
+  border-radius: 999px;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.portal-progress-track span {
+  background: var(--ap-primary);
+  display: block;
+  height: 100%;
+}
+
+.portal-workspace,
+.portal-summary-panel,
+.portal-report-detail,
+.portal-report-sections {
+  display: grid;
+  gap: 16px;
+}
+
+.portal-summary-panel h2,
+.portal-report-title h2,
+.portal-report-section h3 {
+  margin: 0;
+}
+
+.portal-summary-panel dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.portal-summary-panel dt {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.portal-summary-panel dd {
+  font-weight: 700;
+  margin: 2px 0 0;
+}
+
+.portal-report-list {
+  border: 1px solid var(--ap-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.portal-report-row {
+  align-items: center;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid var(--ap-border);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 14px 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.portal-report-row:last-child {
+  border-bottom: 0;
+}
+
+.portal-report-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.portal-report-title {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.portal-report-section {
+  border-top: 1px solid var(--ap-border);
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.portal-report-section ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.portal-report-section li {
+  background: var(--ap-surface-muted);
+  border: 1px solid var(--ap-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+
+.portal-empty,
+.portal-alert {
+  display: grid;
+  gap: 8px;
+  margin: 36px auto;
+  max-width: 720px;
+  text-align: center;
+}
+
+.portal-alert {
+  border-color: var(--ap-danger-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

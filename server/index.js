@@ -28,6 +28,26 @@ import {
   submitReportForReview,
   updateReportDraft
 } from "./projectReportService.js";
+import {
+  getPortalMe,
+  getPortalProject,
+  getPortalReport,
+  getPortalReportPdf,
+  grantPortalProjectAccess,
+  listPortalProjects,
+  listPortalReports,
+  listPortalUsers,
+  previewPortalProjectPublication,
+  publishPortalProject,
+  publishReportSnapshot,
+  requirePortalProjectAccess,
+  requirePortalUser,
+  revokePortalProjectAccess,
+  setPortalUserStatus,
+  upsertPortalUser,
+  withdrawPortalProject,
+  withdrawReportPublication
+} from "./clientPortalService.js";
 import { orderReceivedSmsTemplate } from "./smsTemplates.js";
 import { validateTwilioSmsConfig } from "./twilioSmsConfig.js";
 import { sendTwilioSms } from "./twilioSmsService.js";
@@ -57,6 +77,8 @@ const requireAdmin = requireRoles(["admin"]);
 const requireProjectRead = requireProjectAccess("read");
 const requireProjectCommunication = requireProjectAccess("communication");
 const requireProjectCalendar = requireProjectAccess("calendar");
+const requireClientPortalUser = requirePortalUser();
+const requireClientPortalProject = requirePortalProjectAccess();
 
 function getStripeClient() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -307,6 +329,145 @@ app.get("/api/payments/stripe-config-check", requireFirebaseAuth, requireAdmin, 
 });
 
 app.use("/api", requireFirebaseAuth);
+
+app.use("/api/portal", (_request, response, next) => {
+  response.setHeader("Cache-Control", "private, no-store");
+  response.setHeader("Pragma", "no-cache");
+  next();
+});
+
+app.get("/api/portal/me", requireClientPortalUser, async (request, response) => {
+  try {
+    response.json(await getPortalMe(request.auth));
+  } catch (error) {
+    response.status(error.status || 403).json({ success: false, error: error.message || "Client portal access denied", code: error.code || "portal_denied" });
+  }
+});
+
+app.get("/api/portal/projects", requireClientPortalUser, async (request, response) => {
+  try {
+    response.json(await listPortalProjects(request.auth));
+  } catch (error) {
+    response.status(error.status || 403).json({ success: false, error: error.message || "Client portal access denied", code: error.code || "portal_denied" });
+  }
+});
+
+app.get("/api/portal/projects/:projectId", requireClientPortalProject, async (request, response) => {
+  try {
+    response.json(await getPortalProject(request.auth, request.params.projectId));
+  } catch (error) {
+    response.status(error.status || 404).json({ success: false, error: "Portal resource not found", code: error.code || "portal_not_found" });
+  }
+});
+
+app.get("/api/portal/projects/:projectId/reports", requireClientPortalProject, async (request, response) => {
+  try {
+    response.json(await listPortalReports(request.auth, request.params.projectId));
+  } catch (error) {
+    response.status(error.status || 404).json({ success: false, error: "Portal resource not found", code: error.code || "portal_not_found" });
+  }
+});
+
+app.get("/api/portal/projects/:projectId/reports/:snapshotId", requireClientPortalProject, async (request, response) => {
+  try {
+    response.json(await getPortalReport(request.auth, request.params.projectId, request.params.snapshotId));
+  } catch (error) {
+    response.status(error.status || 404).json({ success: false, error: "Portal resource not found", code: error.code || "portal_not_found" });
+  }
+});
+
+app.get("/api/portal/projects/:projectId/reports/:snapshotId/pdf", requireClientPortalProject, async (request, response) => {
+  try {
+    const result = await getPortalReportPdf(request.auth, request.params.projectId, request.params.snapshotId);
+    response.setHeader("Content-Type", "application/pdf");
+    response.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    response.setHeader("Cache-Control", "private, no-store");
+    response.setHeader("Pragma", "no-cache");
+    response.status(200).send(result.buffer);
+  } catch (error) {
+    response.status(error.status || 404).json({ success: false, error: "Portal resource not found", code: error.code || "portal_not_found" });
+  }
+});
+
+app.get("/api/portal-admin/users", requireAdmin, async (request, response) => {
+  try {
+    response.json(await listPortalUsers(request.auth));
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal users could not be loaded", code: error.code || "portal_admin_failed" });
+  }
+});
+
+app.put("/api/portal-admin/users/:userId", requireAdmin, async (request, response) => {
+  try {
+    response.json({ portalUser: await upsertPortalUser(request.auth, request.params.userId, request.body) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal user could not be saved", code: error.code || "portal_user_save_failed" });
+  }
+});
+
+app.post("/api/portal-admin/users/:userId/status", requireAdmin, async (request, response) => {
+  try {
+    response.json({ portalUser: await setPortalUserStatus(request.auth, request.params.userId, request.body.status) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal user status could not be updated", code: error.code || "portal_user_status_failed" });
+  }
+});
+
+app.put("/api/portal-admin/users/:userId/project-access/:projectId", requireAdmin, async (request, response) => {
+  try {
+    response.json({ access: await grantPortalProjectAccess(request.auth, request.params.userId, request.params.projectId, request.body) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal project access could not be granted", code: error.code || "portal_access_failed" });
+  }
+});
+
+app.post("/api/portal-admin/users/:userId/project-access/:projectId/revoke", requireAdmin, async (request, response) => {
+  try {
+    response.json({ success: true, access: await revokePortalProjectAccess(request.auth, request.params.userId, request.params.projectId) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal project access could not be revoked", code: error.code || "portal_access_revoke_failed" });
+  }
+});
+
+app.get("/api/projects/:projectId/portal-publication/preview", requireProjectCommunication, async (request, response) => {
+  try {
+    response.json({ preview: await previewPortalProjectPublication(request.auth, request.params.projectId) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal publication preview failed", code: error.code || "portal_publication_preview_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/portal-publication", requireProjectCommunication, async (request, response) => {
+  try {
+    response.json({ publication: await publishPortalProject(request.auth, request.params.projectId, request.body) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal project publication failed", code: error.code || "portal_publication_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/portal-publication/withdraw", requireProjectCommunication, async (request, response) => {
+  try {
+    response.json({ publication: await withdrawPortalProject(request.auth, request.params.projectId) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Portal project withdrawal failed", code: error.code || "portal_publication_withdraw_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/report-publications/:snapshotId", requireProjectCommunication, async (request, response) => {
+  try {
+    response.json({ publication: await publishReportSnapshot(request.auth, request.params.projectId, request.params.snapshotId) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report publication failed", code: error.code || "report_publication_failed" });
+  }
+});
+
+app.post("/api/projects/:projectId/report-publications/:snapshotId/withdraw", requireProjectCommunication, async (request, response) => {
+  try {
+    response.json({ publication: await withdrawReportPublication(request.auth, request.params.projectId, request.params.snapshotId) });
+  } catch (error) {
+    response.status(error.status || 400).json({ success: false, error: error.message || "Report withdrawal failed", code: error.code || "report_publication_withdraw_failed" });
+  }
+});
 
 app.get("/api/projects/:projectId/communications-workspace", requireProjectRead, async (request, response) => {
   const workspace = await listProjectCommunicationWorkspace(request.params.projectId);

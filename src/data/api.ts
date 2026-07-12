@@ -12,6 +12,11 @@ import type {
   OrderStatus,
   PaymentLog,
   PaymentLogInput,
+  PortalProjectCard,
+  PortalProjectPublication,
+  PortalReportDetail,
+  PortalReportSummary,
+  PortalUser,
   ProjectCalendarEvent,
   ProjectCommunication,
   ProjectRecipient,
@@ -220,6 +225,120 @@ export function emailClientReportSnapshot(projectId: string, reportId: string, s
   return request<{ communication: ProjectCommunication; artifact: ClientReportArtifact }>(`/api/projects/${projectId}/reports/${reportId}/snapshots/${snapshotId}/email`, {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export function getPortalMe() {
+  return request<{
+    userId: string;
+    email: string;
+    displayName: string;
+    clientId: string;
+    clientName: string;
+    portalStatus: PortalUser["status"];
+    projectCount: number;
+  }>("/api/portal/me");
+}
+
+export function getPortalProjects() {
+  return request<{ projects: PortalProjectCard[] }>("/api/portal/projects");
+}
+
+export function getPortalProject(projectId: string) {
+  return request<{ project: PortalProjectCard; latestReports: PortalReportSummary[] }>(`/api/portal/projects/${projectId}`);
+}
+
+export function getPortalReports(projectId: string) {
+  return request<{ reports: PortalReportSummary[] }>(`/api/portal/projects/${projectId}/reports`);
+}
+
+export function getPortalReport(projectId: string, portalReportId: string) {
+  return request<{ report: PortalReportDetail }>(`/api/portal/projects/${projectId}/reports/${portalReportId}`);
+}
+
+export async function downloadPortalReportPdf(projectId: string, portalReportId: string) {
+  const response = await fetch(`/api/portal/projects/${projectId}/reports/${portalReportId}/pdf`, {
+    headers: await getAuthenticatedHeaders()
+  });
+
+  if (!response.ok) {
+    let data: unknown = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = {};
+    }
+    throw new Error(getApiErrorMessage(response.status, data));
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "client-progress-report.pdf"
+  };
+}
+
+export function listPortalUsers() {
+  return request<{ portalUsers: PortalUser[] }>("/api/portal-admin/users");
+}
+
+export function savePortalUser(userId: string, input: {
+  clientId: string;
+  displayName: string;
+  email: string;
+  status?: PortalUser["status"];
+}) {
+  return request<{ portalUser: PortalUser }>(`/api/portal-admin/users/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updatePortalUserStatus(userId: string, status: PortalUser["status"]) {
+  return request<{ portalUser: PortalUser }>(`/api/portal-admin/users/${userId}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status })
+  });
+}
+
+export function grantPortalProjectAccess(userId: string, projectId: string, input: { expiresAt?: string | null } = {}) {
+  return request<{ access: unknown }>(`/api/portal-admin/users/${userId}/project-access/${projectId}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export function revokePortalProjectAccess(userId: string, projectId: string) {
+  return request<{ success: boolean }>(`/api/portal-admin/users/${userId}/project-access/${projectId}/revoke`, {
+    method: "POST"
+  });
+}
+
+export function previewPortalProjectPublication(projectId: string) {
+  return request<{ preview: PortalProjectPublication }>(`/api/projects/${projectId}/portal-publication/preview`);
+}
+
+export function publishPortalProject(projectId: string, input: Partial<PortalProjectPublication> = {}) {
+  return request<{ publication: PortalProjectPublication }>(`/api/projects/${projectId}/portal-publication`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function withdrawPortalProject(projectId: string) {
+  return request<{ publication: PortalProjectPublication }>(`/api/projects/${projectId}/portal-publication/withdraw`, {
+    method: "POST"
+  });
+}
+
+export function publishReportToPortal(projectId: string, snapshotId: string) {
+  return request<{ publication: unknown }>(`/api/projects/${projectId}/report-publications/${snapshotId}`, {
+    method: "POST"
+  });
+}
+
+export function withdrawReportFromPortal(projectId: string, snapshotId: string) {
+  return request<{ publication: unknown }>(`/api/projects/${projectId}/report-publications/${snapshotId}/withdraw`, {
+    method: "POST"
   });
 }
 
