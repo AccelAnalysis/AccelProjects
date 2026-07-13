@@ -13,6 +13,7 @@ import { createProjectUpdatePlan } from "../updates/projectUpdatePlanner";
 import type { ProjectUpdateIssue, ProjectUpdatePlan } from "../updates/projectUpdateTypes";
 import { buildProjectPath, buildProjectVersionHistoryPath } from "../routing/projectRoutes";
 import { formatDateOnly } from "../utils/dateOnly";
+import { queueProjectFileLifecycleUpdate } from "../data/api";
 
 const maxUpdateFileBytes = 2 * 1024 * 1024;
 
@@ -46,6 +47,7 @@ export function ProjectUpdatePage({
   const [removalAcknowledged, setRemovalAcknowledged] = useState(false);
   const [applyError, setApplyError] = useState("");
   const [result, setResult] = useState<Awaited<ReturnType<typeof applyProjectUpdateFromExportInFirestore>> | null>(null);
+  const [queuedJob, setQueuedJob] = useState<{ id: string; state: string; progress: { completed: number; total: number } } | null>(null);
   const split = splitIssues([...(plan?.validationIssues ?? []), ...issues]);
   const hasRemovals = Boolean(plan && plan.changeCounts.removed > 0);
   const canApply = Boolean(plan && split.errors.length === 0 && plan.changeCounts.added + plan.changeCounts.modified + plan.changeCounts.removed > 0 && applyReviewed && (!hasRemovals || removalAcknowledged) && canManage && !loading);
@@ -87,6 +89,7 @@ export function ProjectUpdatePage({
     setLoading(true);
     setApplyError("");
     setResult(null);
+    setQueuedJob(null);
     setPlan(null);
     setIssues([]);
     setApplyReviewed(false);
@@ -171,9 +174,22 @@ export function ProjectUpdatePage({
     setApplyError("");
 
     try {
-      const applyResult = await applyProjectUpdateFromExportInFirestore(plan);
-      setResult(applyResult);
-      await onProjectUpdated(activeProject.id);
+      if (plan.executionMode === "durable_lifecycle_job") {
+        const queued = await queueProjectFileLifecycleUpdate(activeProject.id, {
+          expectedProjectRevision: plan.baseRevision,
+          sourceSnapshotId: plan.sourceSnapshotId,
+          sourcePackageId: plan.sourcePackageId,
+          sourceSnapshotHash: plan.sourceSnapshotHash,
+          uploadedFileHash: plan.uploadedFileHash,
+          resultStateHash: plan.resultStateHash,
+          operations: plan.uploadedPackage.lifecycleOperations ?? []
+        });
+        setQueuedJob(queued.job);
+      } else {
+        const applyResult = await applyProjectUpdateFromExportInFirestore(plan);
+        setResult(applyResult);
+        await onProjectUpdated(activeProject.id);
+      }
     } catch (error) {
       setApplyError(getFirestorePermissionMessage(error));
     } finally {
@@ -204,8 +220,8 @@ export function ProjectUpdatePage({
           </article>
           <article className="metric-card">
             <span>Atomic limit</span>
-            <strong>450 writes</strong>
-            <p>Large updates are blocked before apply.</p>
+            <strong>450 atomic writes</strong>
+            <p>Large lifecycle-only updates use a durable server job.</p>
           </article>
         </div>
         <label className="compact-field full-width">
@@ -300,7 +316,7 @@ export function ProjectUpdatePage({
           {applyError ? <p className="form-error">{applyError}</p> : null}
           <button className="action-button" type="button" onClick={() => void applyUpdate()} disabled={!canApply}>
             <Upload size={18} aria-hidden="true" />
-            {loading ? "Applying..." : "Apply Update"}
+            {loading ? "Applying..." : plan.executionMode === "durable_lifecycle_job" ? "Queue Durable Update" : "Apply Update"}
           </button>
         </section>
       ) : null}
@@ -323,6 +339,13 @@ export function ProjectUpdatePage({
             <button className="action-button" type="button" onClick={() => onNavigate(buildProjectPath(project.id, "plan"))}>Open Plan</button>
             <button className="secondary-button" type="button" onClick={() => onNavigate(buildProjectVersionHistoryPath(project.id))}>Version History</button>
           </div>
+        </section>
+      ) : null}
+
+      {queuedJob ? (
+        <section className="panel">
+          <div className="panel-header"><div><h2>Update Queued</h2><p>Durable job {queuedJob.id} is ready for the lifecycle worker.</p></div><CheckCircle2 size={24} aria-hidden="true" /></div>
+          <p>{queuedJob.progress.total} lifecycle transitions planned. The project revision advances once every batch passes the final integrity check.</p>
         </section>
       ) : null}
     </div>

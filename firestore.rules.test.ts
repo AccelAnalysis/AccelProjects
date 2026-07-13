@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, collectionGroup, deleteDoc, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { collection, collectionGroup, deleteDoc, deleteField, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from "firebase/firestore";
 
 const projectId = "rules-project";
 const otherProjectId = "other-project";
@@ -56,10 +56,10 @@ async function seedBaseData() {
     await Promise.all([
       setDoc(doc(db, ...orgPath("projects", projectId)), { id: projectId, organizationId: orgId, ownerId: "owner_pm", revision: 1, updatedAt: "2026-07-10T00:00:00.000Z", lastStructuralChangeAt: "2026-07-10T00:00:00.000Z" }),
       setDoc(doc(db, ...orgPath("projects", otherProjectId)), { id: otherProjectId, organizationId: orgId, ownerId: "other_pm", revision: 1, updatedAt: "2026-07-10T00:00:00.000Z", lastStructuralChangeAt: "2026-07-10T00:00:00.000Z" }),
-      setDoc(doc(db, ...orgPath("projects", projectId, "members", "lead_pm")), { id: "member_lead", projectId, userId: "lead_pm", role: "lead" }),
-      setDoc(doc(db, ...orgPath("projects", projectId, "members", "contributor")), { id: "member_contributor", projectId, userId: "contributor", role: "contributor" }),
-      setDoc(doc(db, ...orgPath("projects", projectId, "members", "viewer")), { id: "member_viewer", projectId, userId: "viewer", role: "observer" }),
-      setDoc(doc(db, ...orgPath("projects", projectId, "members", "client")), { id: "member_client", projectId, userId: "client", role: "observer" }),
+      setDoc(doc(db, ...orgPath("projects", projectId, "members", "lead_pm")), { id: "member_lead", projectId, userId: "lead_pm", role: "lead", accessState: "active" }),
+      setDoc(doc(db, ...orgPath("projects", projectId, "members", "contributor")), { id: "member_contributor", projectId, userId: "contributor", role: "contributor", accessState: "active" }),
+      setDoc(doc(db, ...orgPath("projects", projectId, "members", "viewer")), { id: "member_viewer", projectId, userId: "viewer", role: "observer", accessState: "active" }),
+      setDoc(doc(db, ...orgPath("projects", projectId, "members", "client")), { id: "member_client", projectId, userId: "client", role: "observer", accessState: "active" }),
       setDoc(doc(db, ...orgPath("projects", projectId, "tasks", "task_assigned")), { id: "task_assigned", projectId, assigneeId: "contributor", status: "todo", priority: "medium", updatedAt: "2026-07-10T00:00:00.000Z" })
     ]);
   });
@@ -251,10 +251,33 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(updateDoc(userRef("other_pm", "viewer"), { role: "admin", updatedAt: "2026-07-10T02:00:00.000Z" }));
   });
 
-  it("allows administrators to perform authorized role updates and delete other users only", async () => {
+  it("allows authorized role updates but denies browser user deletion", async () => {
     await assertSucceeds(updateDoc(userRef("admin", "viewer"), { role: "contributor", updatedAt: "2026-07-10T02:00:00.000Z" }));
-    await assertSucceeds(deleteDoc(userRef("admin", "viewer")));
+    await assertFails(deleteDoc(userRef("admin", "viewer")));
     await assertFails(deleteDoc(userRef("admin", "admin")));
+  });
+
+  it("denies browser hard delete and lifecycle forgery for managed records", async () => {
+    const task = doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "tasks", "task_assigned"));
+    await assertFails(deleteDoc(projectRef("admin")));
+    await assertFails(deleteDoc(task));
+    await assertFails(updateDoc(task, { lifecycle: { schemaVersion: 1, state: "trashed", retentionClass: "operational_30d", legalHold: false, lastOperationId: "forged" } }));
+    await assertFails(updateDoc(doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "members", "contributor")), { accessState: "removed" }));
+    await assertFails(updateDoc(projectRef("admin"), { lifecycle: { schemaVersion: 1, state: "archived", retentionClass: "business_7y", legalHold: false, lastOperationId: "forged" } }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("recordLifecycleOperations", "forged")), { id: "forged", actorId: "admin" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecycleJobs", "forged")), { id: "forged", state: "completed" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecycleJobs", "job_1", "items", "forged")), { path: "forged", pending: false }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecyclePurgeJobs", "forged")), { id: "forged", state: "completed" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("projects", projectId, "documents", "doc_1", "versions", "forged")), { storagePath: "forged" }));
+  });
+
+  it("keeps comment creation, editing, redaction history, and deletion server controlled", async () => {
+    const comment = doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1"));
+    await assertFails(setDoc(comment, { id: "comment_1", taskId: "task_assigned", authorId: "contributor", body: "forged", visibility: "internal", createdAt: "forged" }));
+    await testEnv.withSecurityRulesDisabled(async (context) => { await setDoc(doc(context.firestore(), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1")), { id: "comment_1", taskId: "task_assigned", authorId: "contributor", body: "server", visibility: "internal", createdAt: "2026-07-10T00:00:00.000Z" }); });
+    await assertFails(updateDoc(comment, { body: "forged edit", editedBy: "contributor", editedAt: "forged" }));
+    await assertFails(deleteDoc(comment));
+    await assertFails(setDoc(doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "tasks", "task_assigned", "comments", "comment_1", "moderationHistory", "forged")), { originalBody: "secret" }));
   });
 
   it("denies unauthorized organization updates and allows supported admin updates", async () => {
@@ -274,13 +297,41 @@ describe("Firestore operational readiness rules", () => {
   });
 
   it("supports membership-scoped project loading queries", async () => {
-    const memberQuery = query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"));
-    const otherMemberQuery = query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "viewer"));
+    const memberQuery = query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"), where("accessState", "==", "active"));
+    const otherMemberQuery = query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "viewer"), where("accessState", "==", "active"));
     const ownerQuery = query(collection(dbFor("owner_pm"), ...orgPath("projects")), where("ownerId", "==", "owner_pm"));
 
     await assertSucceeds(getDocs(memberQuery));
     await assertFails(getDocs(otherMemberQuery));
     await assertSucceeds(getDocs(ownerQuery));
+  });
+
+  it("immediately revokes access when a project membership is lifecycle-removed", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), ...orgPath("projects", projectId, "members", "contributor")), { accessState: "removed", lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", lastOperationId: "op_remove" } });
+    });
+    await assertFails(getDoc(projectRef("contributor")));
+    const removedMemberships = await assertSucceeds(getDocs(query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"), where("accessState", "==", "active"))));
+    expect(removedMemberships.docs).toHaveLength(0);
+    await assertFails(getDocs(query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"))));
+    await assertFails(getDoc(doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned"))));
+    await assertFails(updateDoc(doc(dbFor("contributor"), ...orgPath("projects", projectId, "tasks", "task_assigned")), { status: "in_progress", priority: "high", updatedAt: "2026-07-10T01:00:00.000Z" }));
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), ...orgPath("projects", projectId, "members", "contributor")), { accessState: "active", lifecycle: { schemaVersion: 1, state: "active", retentionClass: "relationship_30d", lastOperationId: "op_restore" } });
+    });
+    const restoredMemberships = await assertSucceeds(getDocs(query(collectionGroup(dbFor("contributor"), "members"), where("userId", "==", "contributor"), where("accessState", "==", "active"))));
+    expect(restoredMemberships.docs.map((item) => item.ref.path)).toEqual([`organizations/${orgId}/projects/${projectId}/members/contributor`]);
+    await assertSucceeds(getDoc(projectRef("contributor")));
+  });
+
+  it("fails closed for legacy memberships until accessState is backfilled", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), ...orgPath("projects", projectId, "members", "viewer")), { accessState: deleteField() });
+    });
+    await assertFails(getDoc(projectRef("viewer")));
+    const memberships = await assertSucceeds(getDocs(query(collectionGroup(dbFor("viewer"), "members"), where("userId", "==", "viewer"), where("accessState", "==", "active"))));
+    expect(memberships.empty).toBe(true);
   });
 
   it("preserves contributor task-update restrictions", async () => {

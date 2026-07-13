@@ -55,7 +55,7 @@ async function planFor(mutator: (pkg: Awaited<ReturnType<typeof sourceFixture>>[
 }
 
 describe("project update provenance and planning", () => {
-  it("verifies a known schema 1.1 export snapshot", async () => {
+  it("verifies a known schema 1.2 export snapshot", async () => {
     const { originalPackage, packageJson, sourceSnapshot } = await sourceFixture();
     const result = await verifyProjectUpdateSource({
       projectId,
@@ -117,13 +117,53 @@ describe("project update provenance and planning", () => {
     ]));
   });
 
-  it("blocks deleting tasks that have comments", async () => {
+  it("blocks direct lifecycle and legal-hold forgery in update packages", async () => {
+    const plan = await planFor((pkg) => { pkg.tasks[0].lifecycle = { schemaVersion: 1, state: "active", retentionClass: "legal_hold", legalHold: false, lastOperationId: "forged" }; });
+    expect(plan.validationIssues.map((issue) => issue.code)).toContain("immutable_field_changed");
+  });
+
+  it("blocks implicit omission instead of deleting commented tasks", async () => {
     const commentedTaskId = initialProjectState.taskComments[0].taskId;
     const plan = await planFor((pkg) => {
       pkg.tasks = pkg.tasks.filter((task) => task.id !== commentedTaskId);
       pkg.taskDependencies = pkg.taskDependencies.filter((dependency) => dependency.taskId !== commentedTaskId && dependency.dependsOnTaskId !== commentedTaskId);
     });
 
-    expect(plan.validationIssues.map((issue) => issue.code)).toContain("task_with_comments_cannot_be_removed");
+    expect(plan.validationIssues.map((issue) => issue.code)).toContain("implicit_removal_not_allowed");
+    expect(plan.resultCanonicalPackage.tasks.some((task) => task.id === commentedTaskId)).toBe(true);
+  });
+
+  it("turns an explicit schema 1.2 omission into a retained lifecycle transition", async () => {
+    const milestoneId = initialProjectState.milestones.find((milestone) => milestone.projectId === projectId)!.id;
+    const plan = await planFor((pkg) => {
+      pkg.milestones = pkg.milestones.filter((milestone) => milestone.id !== milestoneId);
+      pkg.lifecycleOperations = [{ entityType: "milestones", entityId: milestoneId, action: "trash", reason: "Duplicate milestone", expectedPriorState: "active" }];
+    });
+
+    expect(plan.validationIssues.filter((issue) => issue.severity === "error")).toHaveLength(0);
+    expect(plan.removals).toHaveLength(0);
+    expect(plan.modifications).toHaveLength(1);
+    expect(plan.modifications[0].fields.map((field) => field.field)).toEqual(["lifecycle"]);
+    expect(plan.executionMode).toBe("atomic");
+    expect(plan.resultCanonicalPackage.milestones.find((milestone) => milestone.id === milestoneId)?.lifecycle?.state).toBe("trashed");
+  });
+
+  it("delegates a large lifecycle-only schema 1.2 update to a durable job", async () => {
+    const template = initialProjectState.milestones.find((milestone) => milestone.projectId === projectId)!;
+    const milestones = Array.from({ length: 446 }, (_, index) => ({ ...template, id: `lifecycle_milestone_${String(index).padStart(3, "0")}`, name: `Lifecycle milestone ${index}` }));
+    const currentState = { ...initialProjectState, milestones: [...initialProjectState.milestones.filter((item) => item.projectId !== projectId), ...milestones] };
+    const originalPackage = createCanonicalProjectExport(currentState, projectId, "2026-07-10T12:00:00.000Z", { exportSnapshotId: "export_snapshot_large" });
+    const packageJson = stringifyCanonicalProjectExport(originalPackage);
+    const sourceSnapshot: ProjectExportSnapshot = { id: "export_snapshot_large", projectId, baseRevision: originalPackage.baseRevision, packageId: originalPackage.packageId, sourceHash: await hashProjectExport(originalPackage), snapshotType: "manual_export", createdBy: actor.id, createdAt: "2026-07-10T12:00:01.000Z", packageJson };
+    const uploadedPackage = structuredClone(originalPackage);
+    uploadedPackage.milestones = [];
+    uploadedPackage.lifecycleOperations = milestones.map((milestone) => ({ entityType: "milestones" as const, entityId: milestone.id, action: "archive" as const, reason: "Bulk archive", expectedPriorState: "active" as const }));
+
+    const plan = await createProjectUpdatePlan({ projectId, originalPackage, uploadedPackage, sourceSnapshot, currentState, currentUser: actor, uploadedFileHash: "large-file-hash", applyTimestamp: "2026-07-10T12:30:00.000Z", generateId: (_entityType, id) => id });
+
+    expect(plan.validationIssues.filter((item) => item.severity === "error")).toHaveLength(0);
+    expect(plan.expectedWriteCount).toBe(451);
+    expect(plan.executionMode).toBe("durable_lifecycle_job");
+    expect(plan.modifications).toHaveLength(446);
   });
 });

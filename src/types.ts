@@ -1,3 +1,5 @@
+import type { RecordLifecycleMetadata } from "./lifecycle/types";
+
 export type OrderStatus = "draft" | "pending_payment" | "paid" | "failed";
 export type PaymentStatus = "unpaid" | "pending" | "paid" | "failed" | "canceled";
 
@@ -127,6 +129,7 @@ export type User = {
   notificationPreferences?: NotificationPreferences;
   createdAt?: string;
   updatedAt?: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Organization = {
@@ -144,6 +147,7 @@ export type Client = {
   email: string;
   phone: string;
   status: "lead" | "active" | "paused" | "archived";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Project = {
@@ -164,6 +168,7 @@ export type Project = {
   updatedAt: string;
   revision?: number;
   lastStructuralChangeAt?: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectMember = {
@@ -171,6 +176,8 @@ export type ProjectMember = {
   projectId: string;
   userId: string;
   role: "sponsor" | "lead" | "contributor" | "observer";
+  accessState: "active" | "removed";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Phase = {
@@ -181,6 +188,7 @@ export type Phase = {
   startDate: string;
   endDate: string;
   sortOrder?: number;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Task = {
@@ -197,6 +205,7 @@ export type Task = {
   sortOrder?: number;
   estimateHours: number;
   completedAt: string | null;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type TaskComment = {
@@ -206,6 +215,16 @@ export type TaskComment = {
   body: string;
   visibility: "internal" | "client";
   createdAt: string;
+  lifecycle?: RecordLifecycleMetadata;
+  editedAt?: string;
+  editedBy?: string;
+  revision?: number;
+  moderation?: {
+    state: "visible" | "removed_by_author" | "redacted_by_manager";
+    at: string;
+    by: string;
+    reason?: string;
+  };
 };
 
 export type TaskDependency = {
@@ -213,6 +232,7 @@ export type TaskDependency = {
   taskId: string;
   dependsOnTaskId: string;
   type: "finish_to_start" | "start_to_start" | "finish_to_finish";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectRisk = {
@@ -223,6 +243,7 @@ export type ProjectRisk = {
   probability: "low" | "medium" | "high";
   status: "monitoring" | "mitigating" | "resolved";
   mitigationPlan: string;
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type Milestone = {
@@ -231,6 +252,7 @@ export type Milestone = {
   name: string;
   date: string;
   status: "planned" | "at_risk" | "complete";
+  lifecycle?: RecordLifecycleMetadata;
 };
 
 export type ProjectDocument = {
@@ -241,6 +263,35 @@ export type ProjectDocument = {
   url: string;
   ownerId: string;
   createdAt: string;
+  lifecycle?: RecordLifecycleMetadata;
+  category?: "general" | "contract" | "billing" | "approved_deliverable" | "report_artifact";
+  currentVersionId?: string | null;
+  visibility?: "internal" | "client_visible";
+  storageProvider?: "firebase_storage" | "external";
+  managed?: boolean;
+  contentType?: string;
+  originalFilename?: string;
+  sizeBytes?: number;
+  checksumSha256?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  retentionClass?: import("./lifecycle/types").RetentionClass;
+  locked?: boolean;
+};
+
+export type ProjectDocumentVersion = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  documentId: string;
+  storagePath: string;
+  contentType: string;
+  originalFilename: string;
+  sanitizedFilename: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  createdAt: string;
+  createdBy: string;
 };
 
 export type ProjectMetric = {
@@ -250,6 +301,8 @@ export type ProjectMetric = {
   value: number;
   suffix: string;
   tone: "success" | "warning" | "danger" | "info";
+  lifecycle?: RecordLifecycleMetadata;
+  source?: "manual" | "imported" | "computed";
 };
 
 export type ProjectActivityEvent = {
@@ -278,6 +331,7 @@ export type ProjectCommunication = {
   audience: "client" | "internal" | "mixed";
   visibility: "internal" | "client_visible";
   status: ProjectCommunicationStatus;
+  lifecycle?: RecordLifecycleMetadata;
   subject: string;
   bodyText: string;
   toRecipients: ProjectRecipient[];
@@ -329,6 +383,7 @@ export type ProjectCalendarEvent = {
   descriptionText: string;
   visibility: "internal" | "client_visible";
   status: ProjectCalendarEventStatus;
+  lifecycle?: RecordLifecycleMetadata;
   calendarOwnerEmail: string;
   startDateTime: string;
   endDateTime: string;
@@ -353,7 +408,7 @@ export type ProjectCalendarEvent = {
   lastErrorMessage: string | null;
 };
 
-export type ClientReportStatus = "draft" | "ready_for_review" | "approved";
+export type ClientReportStatus = "draft" | "ready_for_review" | "approved" | "voided" | "superseded";
 
 export type ClientReportItem = {
   id: string;
@@ -391,6 +446,14 @@ export type ClientProgressReport = {
   submittedBy: string | null;
   approvedAt: string | null;
   approvedBy: string | null;
+  lifecycle?: RecordLifecycleMetadata;
+  voidedAt?: string | null;
+  voidedBy?: string | null;
+  voidReason?: string | null;
+  supersedesReportId?: string | null;
+  supersedesSnapshotId?: string | null;
+  supersededByReportId?: string | null;
+  supersededBySnapshotId?: string | null;
 };
 
 export type ClientReportSnapshot = {
@@ -542,6 +605,8 @@ export type PortalReportSummary = {
   approvedAt: string;
   publishedAt: string;
   pdfAvailable: boolean;
+  sourceReportStatus?: "approved" | "voided" | "superseded";
+  supersededByReportId?: string | null;
 };
 
 export type PortalReportItem = Omit<ClientReportItem, "id">;
@@ -581,6 +646,9 @@ export type ProjectVersion = {
     | "dependency_deleted"
     | "risk_created"
     | "risk_updated"
+    | "lifecycle"
+    | "membership_added"
+    | "membership_role_changed"
     | "project_exported"
     | "project_file_updated";
   summary: string;

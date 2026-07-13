@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Managed document objects are written and streamed only by the authenticated
+    // Admin SDK server. Browser access is denied to prevent arbitrary paths,
+    // forged metadata, cross-project reads, and direct deletion.
+    match /organizations/{organizationId}/projects/{projectId}/documents/{documentId}/versions/{versionId}/{filename} {
+      allow read, write: if false;
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

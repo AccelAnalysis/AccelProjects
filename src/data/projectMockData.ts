@@ -128,11 +128,11 @@ export const initialProjectState: ProjectState = {
     }
   ],
   projectMembers: [
-    { id: "member_sarah_hampton", projectId: "project_hampton_workforce", userId: "user_sarah", role: "lead" },
-    { id: "member_marcus_hampton", projectId: "project_hampton_workforce", userId: "user_marcus", role: "contributor" },
-    { id: "member_elena_hampton", projectId: "project_hampton_workforce", userId: "user_elena", role: "contributor" },
-    { id: "member_dana_hampton", projectId: "project_hampton_workforce", userId: "user_dana", role: "observer" },
-    { id: "member_elena_northstar", projectId: "project_northstar_portal", userId: "user_elena", role: "lead" }
+    { id: "member_sarah_hampton", projectId: "project_hampton_workforce", userId: "user_sarah", role: "lead", accessState: "active" },
+    { id: "member_marcus_hampton", projectId: "project_hampton_workforce", userId: "user_marcus", role: "contributor", accessState: "active" },
+    { id: "member_elena_hampton", projectId: "project_hampton_workforce", userId: "user_elena", role: "contributor", accessState: "active" },
+    { id: "member_dana_hampton", projectId: "project_hampton_workforce", userId: "user_dana", role: "observer", accessState: "active" },
+    { id: "member_elena_northstar", projectId: "project_northstar_portal", userId: "user_elena", role: "lead", accessState: "active" }
   ],
   phases: [
     {

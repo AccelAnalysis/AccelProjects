@@ -1,5 +1,9 @@
 # AccelProjects
 
+Record lifecycle architecture, API contracts, schema evolution, security notes, and deployment limitations are documented in [`docs/record-lifecycle.md`](docs/record-lifecycle.md).
+Operational lifecycle UI and entity behavior are documented in [`docs/record-lifecycle-run-2.md`](docs/record-lifecycle-run-2.md).
+Retention-sensitive records, managed file storage, legal hold, purge jobs, and erasure semantics are documented in [`docs/record-lifecycle-run-3.md`](docs/record-lifecycle-run-3.md).
+
 AccelProjects is a Firebase-backed internal project-management workspace. The original Mini Billing Messenger billing module remains in the repository, but the primary application surface is now AccelProjects project tracking, imports, exports, update-via-file, revisions, scheduling, risks, and account settings.
 
 ## Production-Capable Surfaces
@@ -243,11 +247,11 @@ Not supported through update files:
 
 - Client edits, project owner changes, membership changes, organization users, Firebase Authentication users, task comments, activity history rewrites, prior versions, prior snapshots, import manifests, arbitrary restores, or rollbacks.
 
-Apply is one Firestore transaction. A successful file update creates one project revision, one `ProjectVersion`, one activity event, one immutable update manifest keyed by uploaded-file SHA-256 hash, and one canonical result snapshot.
+Updates at or below the atomic limit use one Firestore transaction. A successful file update creates one project revision, one `ProjectVersion`, one activity event, and one immutable update manifest keyed by uploaded-file SHA-256 hash. Atomic updates also store one canonical result snapshot. Schema 1.2 supports explicit archive, trash, restore, and relationship-removal operations while retaining the record; direct lifecycle, retention, actor, audit, and legal-hold edits remain forbidden.
 
 Safety limits:
 
-- Maximum planned writes: 450.
+- Maximum atomic planned writes: 450. Larger lifecycle-only updates (up to 1,000 transitions) queue a server-owned durable job; mixed-content files must be split.
 - Maximum canonical snapshot JSON size: 700,000 UTF-8 bytes.
 
 ## Current Next Work

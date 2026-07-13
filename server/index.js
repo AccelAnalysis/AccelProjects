@@ -1,7 +1,8 @@
 import express from "express";
 import "dotenv/config";
 import Stripe from "stripe";
-import { createFirebaseAuthMiddleware, requireRoles } from "./apiAuth.js";
+import { getFirestore } from "firebase-admin/firestore";
+import { API_ORGANIZATION_ID, createFirebaseAuthMiddleware, getAdminApp, requireRoles } from "./apiAuth.js";
 import { orderReceivedTemplate } from "./emailTemplates.js";
 import { getMicrosoftProjectConfig } from "./microsoftGraphService.js";
 import { sendMicrosoftEmail } from "./microsoftGraphEmailService.js";
@@ -9,7 +10,8 @@ import { getMicrosoftGraphAccessToken } from "./microsoftGraphAuthService.js";
 import { validateMicrosoftEmailConfig } from "./microsoftEmailConfig.js";
 import { sendEmail } from "./mockEmailService.js";
 import { sendSms } from "./mockSmsService.js";
-import { requireProjectAccess } from "./projectAuthorization.js";
+import { loadProjectAccess, requireProjectAccess } from "./projectAuthorization.js";
+import { applyLifecycle, applyOrganizationLifecycle, LifecycleError, previewLifecycle, previewOrganizationLifecycle } from "./lifecycleService.js";
 import {
   cancelCalendarEvent,
   createCalendarDraft,
@@ -26,7 +28,10 @@ import {
   generateReportPdfArtifact,
   listProjectReports,
   submitReportForReview,
-  updateReportDraft
+  updateReportDraft,
+  withdrawReportFromReview,
+  voidApprovedReport,
+  createSupersedingReportDraft
 } from "./projectReportService.js";
 import {
   getPortalMe,
@@ -49,6 +54,12 @@ import {
   withdrawReportPublication
 } from "./clientPortalService.js";
 import { orderReceivedSmsTemplate } from "./smsTemplates.js";
+import { DocumentServiceError, downloadDocumentVersion, listDocumentVersions, replaceDocumentVersion, uploadDocument } from "./documentService.js";
+import { CommentError, createControlledComment, editControlledComment, redactComment } from "./commentModerationService.js";
+import { createPurgeJob, lifecycleDiagnostics, LifecycleAdminError, runPurgeJob, setLegalHold } from "./lifecycleAdminService.js";
+import { applyBulkTaskLifecycle, BulkLifecycleError, cancelBulkLifecycleJob, previewBulkTaskLifecycle, runBulkLifecycleJob } from "./bulkLifecycleService.js";
+import { cancelLargeLifecycleJob, createFileLifecycleJob, LargeLifecycleError, runLargeLifecycleJob } from "./largeLifecycleService.js";
+import { scanStorageIntegrity, StorageIntegrityError } from "./storageIntegrityService.js";
 import { validateTwilioSmsConfig } from "./twilioSmsConfig.js";
 import { sendTwilioSms } from "./twilioSmsService.js";
 import {
@@ -74,6 +85,7 @@ const app = express();
 const port = process.env.API_PORT || 5174;
 const requireFirebaseAuth = createFirebaseAuthMiddleware();
 const requireAdmin = requireRoles(["admin"]);
+const requireLifecycleManager = requireRoles(["admin", "project_manager"]);
 const requireProjectRead = requireProjectAccess("read");
 const requireProjectCommunication = requireProjectAccess("communication");
 const requireProjectCalendar = requireProjectAccess("calendar");
@@ -256,7 +268,7 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), async
   }
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "15mb" }));
 
 function requireFields(body, fields) {
   return fields.filter((field) => body[field] === undefined || body[field] === null || body[field] === "");
@@ -329,6 +341,76 @@ app.get("/api/payments/stripe-config-check", requireFirebaseAuth, requireAdmin, 
 });
 
 app.use("/api", requireFirebaseAuth);
+
+function lifecycleInput(request) {
+  return { ...request.body, projectId: request.params.projectId, entityType: request.params.entityType, entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } };
+}
+
+function lifecycleFailure(response, error) {
+  const status = error instanceof LifecycleError ? error.status : 500;
+  return response.status(status).json({ success: false, error: error instanceof LifecycleError ? error.code : "lifecycle_operation_failed" });
+}
+
+function bulkLifecycleFailure(response, error) { return response.status(error instanceof BulkLifecycleError ? error.status : 500).json({ success: false, error: error instanceof BulkLifecycleError ? error.code : "bulk_lifecycle_failed" }); }
+function bulkLifecycleInput(request) { return { ...request.body, projectId: request.params.projectId, actor: { id: request.auth.uid, role: request.auth.profile.role } }; }
+app.post("/api/projects/:projectId/lifecycle/tasks/bulk/impact", requireProjectCommunication, async (request, response) => { try { return response.json(await previewBulkTaskLifecycle(bulkLifecycleInput(request))); } catch (error) { return bulkLifecycleFailure(response, error); } });
+app.post("/api/projects/:projectId/lifecycle/tasks/bulk/actions", requireProjectCommunication, async (request, response) => { try { const result = await applyBulkTaskLifecycle(bulkLifecycleInput(request)); return response.status(result.queued ? 202 : 200).json(result); } catch (error) { return bulkLifecycleFailure(response, error); } });
+app.post("/api/projects/:projectId/updates/lifecycle-jobs", requireProjectCommunication, async (request, response) => { try { const result = await createFileLifecycleJob({ ...request.body, projectId: request.params.projectId, actor: { id: request.auth.uid, role: request.auth.profile.role } }); return response.status(202).json(result); } catch (error) { return lifecycleJobFailure(response, error); } });
+
+app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/impact", requireProjectCommunication, async (request, response) => {
+  try { return response.json(await previewLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/actions", requireProjectCommunication, async (request, response) => {
+  try { const result = await applyLifecycle(lifecycleInput(request)); return response.status(result.queued ? 202 : 200).json(result); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+function lifecycleJobFailure(response, error) {
+  if (error instanceof LargeLifecycleError) return response.status(error.status).json({ success: false, error: error.code });
+  return bulkLifecycleFailure(response, error);
+}
+app.post("/api/admin/lifecycle/jobs/:jobId/run", requireAdmin, async (request, response) => { try { return response.json({ job: await runLargeLifecycleJob(request.params.jobId) }); } catch (error) { return lifecycleJobFailure(response, error); } });
+app.post("/api/admin/lifecycle/jobs/:jobId/cancel", requireAdmin, async (request, response) => { try { return response.json({ job: await cancelLargeLifecycleJob(request.params.jobId) }); } catch (error) { return lifecycleJobFailure(response, error); } });
+
+function documentFailure(response, error) { return response.status(error instanceof DocumentServiceError ? error.status : 500).json({ success: false, error: error instanceof DocumentServiceError ? error.code : "document_operation_failed" }); }
+app.post("/api/projects/:projectId/documents", requireProjectCommunication, async (request, response) => { try { return response.status(201).json(await uploadDocument(request.params.projectId, { uid: request.auth.uid, role: request.auth.profile.role }, request.body)); } catch (error) { return documentFailure(response, error); } });
+app.post("/api/projects/:projectId/documents/:documentId/versions", requireProjectCommunication, async (request, response) => { try { return response.status(201).json(await replaceDocumentVersion(request.params.projectId, request.params.documentId, { uid: request.auth.uid, role: request.auth.profile.role }, request.body)); } catch (error) { return documentFailure(response, error); } });
+app.get("/api/projects/:projectId/documents/:documentId/versions", requireProjectRead, async (request, response) => { try { return response.json({ versions: await listDocumentVersions(request.params.projectId, request.params.documentId) }); } catch (error) { return documentFailure(response, error); } });
+app.get("/api/projects/:projectId/documents/:documentId/versions/:versionId/download", requireProjectRead, async (request, response) => { try { const result = await downloadDocumentVersion(request.params.projectId, request.params.documentId, request.params.versionId); response.setHeader("Content-Type", result.version.contentType); response.setHeader("Content-Disposition", `attachment; filename="${result.version.sanitizedFilename}"`); response.setHeader("X-Content-SHA256", result.version.checksumSha256); return response.send(result.buffer); } catch (error) { return documentFailure(response, error); } });
+
+function commentFailure(response, error) { return response.status(error instanceof CommentError ? error.status : 500).json({ success: false, error: error instanceof CommentError ? error.code : "comment_operation_failed" }); }
+app.post("/api/projects/:projectId/tasks/:taskId/comments", requireProjectRead, async (request, response) => { try { return response.status(201).json(await createControlledComment(request.params.projectId, request.params.taskId, { uid: request.auth.uid }, request.body)); } catch (error) { return commentFailure(response, error); } });
+app.patch("/api/projects/:projectId/tasks/:taskId/comments/:commentId", requireProjectRead, async (request, response) => { try { return response.json(await editControlledComment(request.params.projectId, request.params.taskId, request.params.commentId, { uid: request.auth.uid }, request.body.body)); } catch (error) { return commentFailure(response, error); } });
+app.post("/api/projects/:projectId/tasks/:taskId/comments/:commentId/redact", requireProjectCommunication, async (request, response) => { try { return response.json(await redactComment(request.params.projectId, request.params.taskId, request.params.commentId, { uid: request.auth.uid }, request.body.reason)); } catch (error) { return commentFailure(response, error); } });
+
+app.post("/api/lifecycle/client/:entityId/impact", requireAdmin, async (request, response) => {
+  try { return response.json(await previewOrganizationLifecycle({ ...request.body, entityType: "client", entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } })); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.post("/api/lifecycle/client/:entityId/actions", requireAdmin, async (request, response) => {
+  try { return response.json(await applyOrganizationLifecycle({ ...request.body, entityType: "client", entityId: request.params.entityId, actor: { id: request.auth.uid, role: request.auth.profile.role } })); } catch (error) { return lifecycleFailure(response, error); }
+});
+
+app.get("/api/lifecycle/operations", requireLifecycleManager, async (request, response) => {
+  const database = getFirestore(getAdminApp());
+  const snapshot = await database.collection(`organizations/${API_ORGANIZATION_ID}/recordLifecycleOperations`).orderBy("requestedAt", "desc").limit(200).get();
+  const operations = snapshot.docs.map((doc) => doc.data());
+  if (request.auth.profile.role === "admin") return response.json({ operations });
+  const visible = [];
+  for (const operation of operations) {
+    if (!operation.projectId) continue;
+    const access = await loadProjectAccess({ uid: request.auth.uid, role: request.auth.profile.role }, operation.projectId, { database });
+    if (access.canManageCommunication) visible.push(String(operation.action || "").startsWith("legal_hold") ? { ...operation, reason: { code: "restricted_legal_hold" } } : operation);
+  }
+  return response.json({ operations: visible });
+});
+
+function lifecycleAdminFailure(response, error) { return response.status(error instanceof LifecycleAdminError ? error.status : 500).json({ success: false, error: error instanceof LifecycleAdminError ? error.code : "lifecycle_admin_failed" }); }
+app.post("/api/admin/lifecycle/legal-hold", requireAdmin, async (request, response) => { try { return response.json({ operation: await setLegalHold(request.body, { uid: request.auth.uid }) }); } catch (error) { return lifecycleAdminFailure(response, error); } });
+app.post("/api/admin/lifecycle/purge-jobs", requireAdmin, async (request, response) => { try { return response.status(202).json({ job: await createPurgeJob(request.body, { uid: request.auth.uid }) }); } catch (error) { return lifecycleAdminFailure(response, error); } });
+app.post("/api/admin/lifecycle/purge-jobs/:jobId/run", requireAdmin, async (request, response) => { try { return response.json({ job: await runPurgeJob(request.params.jobId) }); } catch (error) { return lifecycleAdminFailure(response, error); } });
+app.get("/api/admin/lifecycle/diagnostics", requireAdmin, async (_request, response) => { try { return response.json(await lifecycleDiagnostics()); } catch (error) { return lifecycleAdminFailure(response, error); } });
+app.get("/api/admin/lifecycle/storage-integrity", requireAdmin, async (request, response) => { try { return response.json(await scanStorageIntegrity({ cursor: request.query.cursor, metadataCursor: request.query.metadataCursor, pageSize: request.query.pageSize, verifyChecksums: request.query.verifyChecksums !== "false" })); } catch (error) { return response.status(error instanceof StorageIntegrityError ? error.status : 500).json({ success: false, error: error instanceof StorageIntegrityError ? error.code : "storage_integrity_failed" }); } });
 
 app.use("/api/portal", (_request, response, next) => {
   response.setHeader("Cache-Control", "private, no-store");
@@ -508,6 +590,10 @@ app.post("/api/projects/:projectId/reports/:reportId/submit", requireProjectComm
     response.status(error.status || 400).json({ success: false, error: error.message || "Report could not be submitted", code: error.code || "report_submit_failed" });
   }
 });
+
+app.post("/api/projects/:projectId/reports/:reportId/withdraw", requireProjectCommunication, async (request, response) => { try { return response.json(await withdrawReportFromReview(request.params.projectId, request.params.reportId, { uid: request.auth.uid })); } catch (error) { return response.status(error.status || 500).json({ success: false, error: error.code || "report_withdraw_failed" }); } });
+app.post("/api/projects/:projectId/reports/:reportId/void", requireProjectCommunication, async (request, response) => { try { return response.json(await voidApprovedReport(request.params.projectId, request.params.reportId, { uid: request.auth.uid }, request.body.reason)); } catch (error) { return response.status(error.status || 500).json({ success: false, error: error.code || "report_void_failed" }); } });
+app.post("/api/projects/:projectId/reports/:reportId/supersede", requireProjectCommunication, async (request, response) => { try { return response.status(201).json(await createSupersedingReportDraft(request.params.projectId, request.params.reportId, { uid: request.auth.uid })); } catch (error) { return response.status(error.status || 500).json({ success: false, error: error.code || "report_supersede_failed" }); } });
 
 app.post("/api/projects/:projectId/reports/:reportId/approve", requireProjectCommunication, async (request, response) => {
   try {

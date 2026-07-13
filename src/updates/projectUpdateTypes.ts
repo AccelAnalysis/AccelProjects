@@ -41,6 +41,8 @@ export type ProjectUpdateIssueCode =
   | "circular_dependency"
   | "dependency_order_conflict"
   | "task_with_comments_cannot_be_removed"
+  | "implicit_removal_not_allowed"
+  | "invalid_lifecycle_operation"
   | "phase_still_in_use"
   | "stale_base_revision"
   | "stale_preview"
@@ -93,6 +95,7 @@ export type ProjectUpdateChangeCounts = {
 };
 
 export type ProjectUpdatePlan = {
+  executionMode: "atomic" | "durable_lifecycle_job";
   projectId: string;
   baseRevision: number;
   resultRevision: number;

@@ -31,11 +31,11 @@ export function canViewInternalProjectData(role: UserRole) {
 }
 
 export function isProjectMember(projectMembers: ProjectMember[], projectId: string, userId: string) {
-  return projectMembers.some((member) => member.projectId === projectId && member.userId === userId);
+  return projectMembers.some((member) => member.projectId === projectId && member.userId === userId && member.accessState === "active" && (member.lifecycle?.state ?? "active") === "active");
 }
 
 export function isProjectLead(projectMembers: ProjectMember[], projectId: string, userId: string) {
-  return projectMembers.some((member) => member.projectId === projectId && member.userId === userId && member.role === "lead");
+  return projectMembers.some((member) => member.projectId === projectId && member.userId === userId && member.role === "lead" && member.accessState === "active" && (member.lifecycle?.state ?? "active") === "active");
 }
 
 export function canManageProject(role: UserRole, userProfile: User | null | undefined, project: Project | undefined, projectState: ProjectState) {

@@ -313,6 +313,34 @@ export async function submitReportForReview(projectId, reportId, actor, { databa
   return { ...report, ...patch };
 }
 
+export async function withdrawReportFromReview(projectId, reportId, actor, { database = firestore() } = {}) {
+  const ref = reportRef(database, projectId, reportId); const snapshot = await ref.get();
+  if (!snapshot.exists) throw new GraphServiceError("Report not found.", { status: 404, code: "report_not_found", category: "not_found" });
+  const report = { id: snapshot.id, ...snapshot.data() };
+  if (report.status !== "ready_for_review") throw new GraphServiceError("Only submitted reports can be withdrawn.", { status: 409, code: "report_not_submitted", category: "conflict" });
+  const timestamp = nowIso(); const patch = { status: "draft", submittedAt: null, submittedBy: null, updatedAt: timestamp, updatedBy: actor.uid };
+  await database.runTransaction(async (transaction) => { transaction.update(ref, patch); const activity = activityRef(database, projectId); transaction.set(activity.ref, { id: activity.id, projectId, actorId: actor.uid, type: "client_report_withdrawn", message: "Client report withdrawn from review.", metadata: { reportId }, createdAt: timestamp }); });
+  return { ...report, ...patch };
+}
+
+export async function voidApprovedReport(projectId, reportId, actor, reason, { database = firestore() } = {}) {
+  if (typeof reason !== "string" || !reason.trim()) throw new GraphServiceError("Void reason is required.", { status: 400, code: "void_reason_required", category: "validation" });
+  const ref = reportRef(database, projectId, reportId); let result;
+  await database.runTransaction(async (transaction) => { const snapshot = await transaction.get(ref); if (!snapshot.exists) throw new GraphServiceError("Report not found.", { status: 404, code: "report_not_found", category: "not_found" }); const report = { id: snapshot.id, ...snapshot.data() }; if (report.status === "voided") { result = report; return; } if (report.status !== "approved") throw new GraphServiceError("Only approved reports can be voided.", { status: 409, code: "report_not_approved", category: "conflict" }); const publicationRef = database.doc(`${projectPath(projectId)}/reportPublications/${report.latestApprovedSnapshotId}`); const publication = await transaction.get(publicationRef); const timestamp = nowIso(); const patch = { status: "voided", voidedAt: timestamp, voidedBy: actor.uid, voidReason: reason.trim().slice(0, 500), updatedAt: timestamp, updatedBy: actor.uid }; transaction.update(ref, patch); if (publication.exists) transaction.update(publicationRef, { sourceReportStatus: "voided", sourceReportVoidedAt: timestamp, updatedAt: timestamp }); const activity = activityRef(database, projectId); transaction.set(activity.ref, { id: activity.id, projectId, actorId: actor.uid, type: "client_report_voided", message: "Approved client report voided; immutable snapshot and artifacts retained.", metadata: { reportId, snapshotId: report.latestApprovedSnapshotId }, createdAt: timestamp }); result = { ...report, ...patch }; });
+  return result;
+}
+
+export async function createSupersedingReportDraft(projectId, reportId, actor, { database = firestore() } = {}) {
+  const sourceRef = reportRef(database, projectId, reportId); const sourceSnapshot = await sourceRef.get();
+  if (!sourceSnapshot.exists) throw new GraphServiceError("Report not found.", { status: 404, code: "report_not_found", category: "not_found" });
+  const source = { id: sourceSnapshot.id, ...sourceSnapshot.data() };
+  if (!source.latestApprovedSnapshotId || !["approved", "voided", "superseded"].includes(source.status)) throw new GraphServiceError("A superseding draft requires an approved source report.", { status: 409, code: "report_not_approved", category: "conflict" });
+  const draft = await createReportDraft(projectId, actor, { ...source, title: `${source.title} — Replacement` }, { database });
+  const patch = { supersedesReportId: source.id, supersedesSnapshotId: source.latestApprovedSnapshotId };
+  await reportRef(database, projectId, draft.id).update(patch);
+  return { ...draft, ...patch };
+}
+
 export async function approveReport(projectId, reportId, actor, { database = firestore() } = {}) {
   const ref = reportRef(database, projectId, reportId);
   const { project, client } = await loadProjectAndClient(database, projectId);
@@ -373,6 +401,15 @@ export async function approveReport(projectId, reportId, actor, { database = fir
     };
     approvedReport = { ...report, ...patch };
 
+    if (report.supersedesReportId) {
+      const supersededRef = reportRef(database, projectId, report.supersedesReportId);
+      const supersededSnapshot = await transaction.get(supersededRef);
+      if (!supersededSnapshot.exists) throw new GraphServiceError("Superseded report was not found.", { status: 409, code: "superseded_report_missing", category: "conflict" });
+      const publicationRef = database.doc(`${projectPath(projectId)}/reportPublications/${report.supersedesSnapshotId}`);
+      const publication = await transaction.get(publicationRef);
+      transaction.update(supersededRef, { status: "superseded", supersededByReportId: reportId, supersededBySnapshotId: snapshotId, updatedAt: approvedAt, updatedBy: actor.uid });
+      if (publication.exists) transaction.update(publicationRef, { sourceReportStatus: "superseded", supersededByReportId: reportId, supersededBySnapshotId: snapshotId, updatedAt: approvedAt });
+    }
     transaction.set(ref.collection("snapshots").doc(snapshotId), approvedSnapshot);
     transaction.update(ref, patch);
     const activity = activityRef(database, projectId);

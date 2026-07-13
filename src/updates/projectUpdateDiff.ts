@@ -3,13 +3,13 @@ import type { ProjectUpdateChange, ProjectUpdateEntityType, ProjectUpdateFieldCh
 
 const displayFieldsByType: Record<ProjectUpdateEntityType, string[]> = {
   project: ["name", "summary", "status", "health", "priority", "startDate", "targetDate", "budget", "currency"],
-  phases: ["name", "status", "startDate", "endDate", "sortOrder"],
-  milestones: ["name", "date", "status"],
-  tasks: ["title", "description", "status", "priority", "phaseId", "assigneeId", "startDate", "dueDate", "sortOrder", "estimateHours", "completedAt"],
-  taskDependencies: ["taskId", "dependsOnTaskId", "type"],
-  risks: ["title", "severity", "probability", "status", "mitigationPlan"],
-  documents: ["title", "type", "url", "ownerId", "createdAt"],
-  metrics: ["label", "value", "suffix", "tone"]
+  phases: ["name", "status", "startDate", "endDate", "sortOrder", "lifecycle"],
+  milestones: ["name", "date", "status", "lifecycle"],
+  tasks: ["title", "description", "status", "priority", "phaseId", "assigneeId", "startDate", "dueDate", "sortOrder", "estimateHours", "completedAt", "lifecycle"],
+  taskDependencies: ["taskId", "dependsOnTaskId", "type", "lifecycle"],
+  risks: ["title", "severity", "probability", "status", "mitigationPlan", "lifecycle"],
+  documents: ["title", "type", "url", "ownerId", "createdAt", "lifecycle"],
+  metrics: ["label", "value", "suffix", "tone", "lifecycle"]
 };
 
 function getEntityName(entity: Record<string, unknown>, entityType: ProjectUpdateEntityType) {

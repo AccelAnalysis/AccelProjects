@@ -12,7 +12,7 @@ import {
   Plus,
   X
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   Client,
   Milestone,
@@ -28,7 +28,7 @@ import type {
   User
 } from "../../types";
 import { mockTeamCapacity } from "../../data/projectMockData";
-import { addDays, formatDateOnly, todayDateOnly } from "../../utils/dateOnly";
+import { addDays, formatDateOnly, isDateOnly, todayDateOnly } from "../../utils/dateOnly";
 import { compareDateOnly } from "../../utils/dateOnly";
 import { getPhaseSequenceLabel, sortPhases } from "../../utils/phaseOrdering";
 import { calculateScheduleRange } from "../../utils/scheduleRange";
@@ -45,7 +45,10 @@ export const taskStatusLabels: Record<Task["status"], string> = {
 };
 
 export function formatDate(date: string | null | undefined) {
-  return date ? formatDateOnly(date) : "Unscheduled";
+  if (!date) return "Unscheduled";
+  if (isDateOnly(date)) return formatDateOnly(date);
+  const value = new Date(date);
+  return Number.isNaN(value.getTime()) ? "Date unavailable" : value.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
 export function getUserName(users: User[], userId: string | null) {
@@ -183,7 +186,10 @@ export function TaskTable({
   canEdit,
   canEditTask,
   onOpenTask,
-  onUpdateTask
+  onUpdateTask,
+  renderLifecycleActions,
+  selectedTaskIds,
+  onToggleTask
 }: {
   tasks: Task[];
   phases: Phase[];
@@ -192,12 +198,16 @@ export function TaskTable({
   canEditTask?: (task: Task) => boolean;
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
+  renderLifecycleActions?: (task: Task) => ReactNode;
+  selectedTaskIds?: Set<string>;
+  onToggleTask?: (taskId: string) => void;
 }) {
   return (
     <div className="table-wrap">
       <table className="task-table">
         <thead>
           <tr>
+            {onToggleTask ? <th scope="col">Select</th> : null}
             <th>Task Name</th>
             <th>Phase</th>
             <th>Assignee</th>
@@ -213,6 +223,7 @@ export function TaskTable({
 
             return (
               <tr key={task.id}>
+                {onToggleTask ? <td><input aria-label={`Select ${task.title}`} checked={selectedTaskIds?.has(task.id) ?? false} onChange={() => onToggleTask(task.id)} type="checkbox" /></td> : null}
                 <td>
                   <strong>{task.title}</strong>
                   <span>{task.description}</span>
@@ -259,7 +270,7 @@ export function TaskTable({
                   )}
                 </td>
                 <td>
-                  <button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>
+                  <div className="inline-actions"><button className="link-button" type="button" onClick={() => onOpenTask(task.id)}>Open</button>{renderLifecycleActions?.(task)}</div>
                 </td>
               </tr>
             );
@@ -279,7 +290,12 @@ export function TaskDetailPanel({
   canAddComment,
   onClose,
   onUpdateTask,
-  onAddComment
+  onAddComment,
+  lifecycleActions,
+  currentUserId,
+  canModerateComments = false,
+  onEditComment,
+  onRedactComment
 }: {
   task: Task;
   phases: Phase[];
@@ -290,10 +306,16 @@ export function TaskDetailPanel({
   onClose: () => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   onAddComment: (taskId: string, body: string) => void;
+  lifecycleActions?: ReactNode;
+  currentUserId?: string;
+  canModerateComments?: boolean;
+  onEditComment?: (commentId: string, body: string) => void;
+  onRedactComment?: (commentId: string, reason: string) => void;
 }) {
   const [newComment, setNewComment] = useTaskCommentDraft(task.id);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null); const [editBody, setEditBody] = useState(""); const [redactingCommentId, setRedactingCommentId] = useState<string | null>(null); const [redactionReason, setRedactionReason] = useState("");
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -319,6 +341,7 @@ export function TaskDetailPanel({
           <p className="eyebrow">{getPhaseName(phases, task.phaseId)}</p>
           <h2>{task.title}</h2>
         </div>
+        {lifecycleActions}
         <button ref={closeButtonRef} className="icon-button" type="button" onClick={onClose} aria-label="Close task detail">
           <X size={18} aria-hidden="true" />
         </button>
@@ -387,8 +410,11 @@ export function TaskDetailPanel({
         {comments.map((comment) => (
           <article className="comment-card" key={comment.id}>
             <strong>{getUserName(users, comment.authorId)}</strong>
-            <p>{comment.body}</p>
-            <span>{new Date(comment.createdAt).toLocaleString()}</span>
+            <p>{comment.moderation?.state === "removed_by_author" ? "Comment removed by author" : comment.moderation?.state === "redacted_by_manager" ? "Comment redacted by project manager" : comment.body}</p>
+            <span>{new Date(comment.createdAt).toLocaleString()}{comment.editedAt ? " · Edited" : ""}</span>
+            {!comment.moderation && editingCommentId === comment.id ? <form onSubmit={(event) => { event.preventDefault(); onEditComment?.(comment.id, editBody); setEditingCommentId(null); }}><textarea aria-label="Edit comment" value={editBody} onChange={(event) => setEditBody(event.target.value)} /><button type="submit">Save edit</button></form> : null}
+            {!comment.moderation && redactingCommentId === comment.id ? <form onSubmit={(event) => { event.preventDefault(); onRedactComment?.(comment.id, redactionReason); setRedactingCommentId(null); }}><input aria-label="Redaction reason" value={redactionReason} onChange={(event) => setRedactionReason(event.target.value)} /><button disabled={!redactionReason.trim()} type="submit">Confirm redaction</button></form> : null}
+            {!comment.moderation ? <div className="button-row">{comment.authorId === currentUserId && onEditComment ? <button className="link-button" type="button" onClick={() => { setEditingCommentId(comment.id); setEditBody(comment.body); }}>Edit</button> : null}{canModerateComments && onRedactComment ? <button className="link-button" type="button" onClick={() => setRedactingCommentId(comment.id)}>Redact</button> : null}</div> : null}
           </article>
         ))}
       </div>
@@ -821,12 +847,14 @@ export function RiskRegister({
   risks,
   canManage,
   onAddRisk,
-  onUpdateRisk
+  onUpdateRisk,
+  renderLifecycleActions
 }: {
   risks: ProjectRisk[];
   canManage: boolean;
   onAddRisk: (risk: Pick<ProjectRisk, "title" | "severity" | "probability" | "status" | "mitigationPlan">) => void;
   onUpdateRisk: (riskId: string, updates: Partial<ProjectRisk>) => void;
+  renderLifecycleActions?: (risk: ProjectRisk) => ReactNode;
 }) {
   const [draft, setDraft] = useRiskDraft();
   const [formOpen, setFormOpen] = useState(risks.length === 0);
@@ -907,6 +935,7 @@ export function RiskRegister({
                     <option key={severity} value={severity}>{severity}</option>
                   ))}
                 </select>
+                {renderLifecycleActions?.(risk)}
               </div>
             ) : null}
           </article>

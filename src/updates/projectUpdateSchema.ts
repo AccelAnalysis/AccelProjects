@@ -1,7 +1,7 @@
 import type { ProjectExportPackage } from "../exports/projectExport";
 import type { ProjectUpdateIssue, ProjectUpdatePackageValidationResult } from "./projectUpdateTypes";
 
-const supportedExportSchemas = new Set(["1.0", "1.1"]);
+const supportedExportSchemas = new Set(["1.0", "1.1", "1.2"]);
 
 function issue(code: ProjectUpdateIssue["code"], message: string, path = "$"): ProjectUpdateIssue {
   return { severity: "error", code, message, path };
@@ -53,11 +53,11 @@ export function validateProjectUpdateExportPackage(value: unknown): ProjectUpdat
   }
 
   if (typeof value.schemaVersion !== "string" || !supportedExportSchemas.has(value.schemaVersion)) {
-    issues.push(issue("unsupported_export_schema", "Supported project export schemas are 1.0 and 1.1.", "$.schemaVersion"));
+    issues.push(issue("unsupported_export_schema", "Supported project export schemas are 1.0, 1.1, and 1.2.", "$.schemaVersion"));
   }
 
-  if (value.schemaVersion === "1.1" && typeof value.exportSnapshotId !== "string") {
-    issues.push(issue("unknown_export_snapshot", "Schema 1.1 update files must include exportSnapshotId.", "$.exportSnapshotId"));
+  if ((value.schemaVersion === "1.1" || value.schemaVersion === "1.2") && typeof value.exportSnapshotId !== "string") {
+    issues.push(issue("unknown_export_snapshot", "Schema 1.1 and 1.2 update files must include exportSnapshotId.", "$.exportSnapshotId"));
   }
 
   ["packageId", "exportedAt", "baseProjectId"].forEach((key) => requireString(value, key, issues, "$"));
@@ -77,6 +77,17 @@ export function validateProjectUpdateExportPackage(value: unknown): ProjectUpdat
   ["members", "phases", "milestones", "tasks", "taskDependencies", "risks", "documents", "metrics"].forEach((key) => (
     requireArray(value, key, issues, "$")
   ));
+
+  if (value.schemaVersion === "1.2") {
+    requireArray(value, "lifecycleOperations", issues, "$");
+    if (Array.isArray(value.lifecycleOperations)) {
+      value.lifecycleOperations.forEach((operation, index) => {
+        if (!isRecord(operation) || !["phases", "milestones", "tasks", "taskDependencies", "risks", "documents", "metrics"].includes(String(operation.entityType)) || typeof operation.entityId !== "string" || !["archive", "trash", "remove", "restore"].includes(String(operation.action)) || typeof operation.reason !== "string" || operation.reason.trim() === "") {
+          issues.push(issue("wrong_package_type", "Lifecycle operations require an allowlisted entity, ID, action, and reason.", `$.lifecycleOperations[${index}]`));
+        }
+      });
+    }
+  }
 
   return {
     package: issues.some((item) => item.severity === "error") ? null : value as ProjectExportPackage,

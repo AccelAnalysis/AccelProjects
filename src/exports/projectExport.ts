@@ -1,11 +1,11 @@
 import type { Client, Project, ProjectDocument, ProjectMetric, ProjectRisk, ProjectState, Task } from "../types";
 import { stableStringify } from "../imports/projectImportPlanner";
 
-export const currentProjectExportSchemaVersion = "1.1" as const;
+export const currentProjectExportSchemaVersion = "1.2" as const;
 export const maxProjectSnapshotBytes = 700_000;
 
 export type ProjectExportPackage = {
-  schemaVersion: "1.0" | "1.1";
+  schemaVersion: "1.0" | "1.1" | "1.2";
   packageType: "accelprojects.project.export";
   packageId: string;
   exportSnapshotId?: string;
@@ -22,6 +22,14 @@ export type ProjectExportPackage = {
   risks: ProjectState["risks"];
   documents: ProjectState["documents"];
   metrics: ProjectState["metrics"];
+  lifecycleOperations?: Array<{
+    entityType: "phases" | "milestones" | "tasks" | "taskDependencies" | "risks" | "documents" | "metrics";
+    entityId: string;
+    action: "archive" | "trash" | "remove" | "restore";
+    reason: string;
+    expectedPriorState?: "active" | "archived" | "trashed" | "removed";
+    strategy?: string;
+  }>;
 };
 
 function byId<T extends { id: string }>(items: T[]) {
@@ -63,7 +71,7 @@ export function createCanonicalProjectExport(
     schemaVersion,
     packageType: "accelprojects.project.export",
     packageId: `export-${projectId}-r${project.revision ?? 1}-${exportedAt.replaceAll(/[:.]/g, "-")}`,
-    ...(schemaVersion === "1.1" ? { exportSnapshotId: options.exportSnapshotId ?? createProjectExportSnapshotId() } : {}),
+    ...(schemaVersion !== "1.0" ? { exportSnapshotId: options.exportSnapshotId ?? createProjectExportSnapshotId() } : {}),
     exportedAt,
     baseProjectId: projectId,
     baseRevision: project.revision ?? 1,
@@ -76,7 +84,8 @@ export function createCanonicalProjectExport(
     taskDependencies: byId(projectState.taskDependencies.filter((dependency) => taskIds.has(dependency.taskId) && taskIds.has(dependency.dependsOnTaskId))),
     risks: byId(risks),
     documents: byId(documents),
-    metrics: byId(metrics)
+    metrics: byId(metrics),
+    ...(schemaVersion === "1.2" ? { lifecycleOperations: [] } : {})
   };
 }
 

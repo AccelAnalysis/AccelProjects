@@ -6,6 +6,8 @@ import {
   sanitizeFilenameSegment,
   sha256Hex,
   stableStringify
+  ,withdrawReportFromReview
+  ,voidApprovedReport
 } from "./projectReportService.js";
 
 describe("client progress report service helpers", () => {
@@ -68,4 +70,15 @@ describe("client progress report service helpers", () => {
     expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
     expect(sanitizeFilenameSegment("Project: Client / Weekly")).toBe("Project-Client-Weekly");
   });
+});
+
+function reportDatabase(report) {
+  const writes = [];
+  const makeRef = (path) => ({ path, id: path.split("/").at(-1), get: async () => ({ exists: true, id: report.id, data: () => report }), update: async (value) => writes.push({ type: "update", path, value }), collection: (name) => ({ doc: (id) => makeRef(`${path}/${name}/${id}`) }) });
+  return { writes, doc: makeRef, runTransaction: async (callback) => callback({ get: async (target) => target.get(), update: (target, value) => writes.push({ type: "update", path: target.path, value }), set: (target, value) => writes.push({ type: "set", path: target.path, value }) }) };
+}
+
+describe("report lifecycle transitions", () => {
+  it("withdraws submitted reports without touching approved snapshots", async () => { const database = reportDatabase({ id: "report_1", status: "ready_for_review", submittedAt: "x", submittedBy: "owner" }); const result = await withdrawReportFromReview("project_1", "report_1", { uid: "owner" }, { database }); expect(result.status).toBe("draft"); expect(result.submittedAt).toBeNull(); expect(database.writes.some((write) => write.value.type === "client_report_withdrawn")).toBe(true); });
+  it("voids approved reports while retaining the immutable snapshot reference", async () => { const database = reportDatabase({ id: "report_1", status: "approved", latestApprovedSnapshotId: "snapshot_1" }); const result = await voidApprovedReport("project_1", "report_1", { uid: "owner" }, "Incorrect period", { database }); expect(result.status).toBe("voided"); expect(result.latestApprovedSnapshotId).toBe("snapshot_1"); expect(database.writes.some((write) => write.value.type === "client_report_voided" && write.value.metadata.snapshotId === "snapshot_1")).toBe(true); });
 });

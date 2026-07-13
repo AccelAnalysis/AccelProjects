@@ -45,6 +45,20 @@ describe("home dashboard selectors", () => {
     expect(isTaskOverdue(task({ status: "in_progress", dueDate: "2026-07-10" }), today)).toBe(true);
   });
 
+  it("excludes lifecycle-trashed tasks and milestones from every Home summary", () => {
+    const lifecycle = { schemaVersion: 1 as const, state: "trashed" as const, retentionClass: "operational_30d" as const, legalHold: false, lastOperationId: "op_trash" };
+    const state = makeState({
+      projects: [project({ id: "project_on_track", health: "on_track" })],
+      tasks: [task({ id: "trashed_overdue", projectId: "project_on_track", dueDate: "2026-07-01", lifecycle })],
+      milestones: [milestone({ id: "trashed_milestone", projectId: "project_on_track", date: "2026-07-20", lifecycle })]
+    });
+    const view = createHomeDashboardView({ projectState: state, role: "admin", userProfile: admin, today });
+
+    expect(view.counts.overdueTasks).toBe(0);
+    expect(view.counts.upcomingMilestones).toBe(0);
+    expect(view.attentionProjects).toEqual([]);
+  });
+
   it("ranks personal priorities for the current user without including other users", () => {
     const state = makeState({
       tasks: [
@@ -113,8 +127,8 @@ describe("home dashboard selectors", () => {
   it("limits contributor and client-safe views to appropriate accessible content", () => {
     const state = makeState({
       projectMembers: [
-        { id: "member_contributor", projectId: "project_on_track", userId: contributor.id, role: "contributor" },
-        { id: "member_client", projectId: "project_on_track", userId: clientUser.id, role: "observer" }
+        { id: "member_contributor", projectId: "project_on_track", userId: contributor.id, role: "contributor", accessState: "active" },
+        { id: "member_client", projectId: "project_on_track", userId: clientUser.id, role: "observer", accessState: "active" }
       ],
       tasks: [
         task({ id: "contributor_task", projectId: "project_on_track", assigneeId: contributor.id, dueDate: "2026-07-10" }),
