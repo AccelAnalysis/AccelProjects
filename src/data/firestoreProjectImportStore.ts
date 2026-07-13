@@ -332,7 +332,8 @@ export async function importProjectPackageToFirestore({
       id: createId("member"),
       projectId,
       userId,
-      role: resolution?.projectRole ?? "contributor"
+      role: resolution?.projectRole ?? "contributor",
+      accessState: "active"
     };
     writes.push({ ref: doc(requireDb(), ...projectPath(projectId), projectCollectionMap.projectMembers, userId), value: member });
   });

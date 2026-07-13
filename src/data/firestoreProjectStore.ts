@@ -336,7 +336,11 @@ async function readAuthorizedProjects(user: FirebaseUser, profile: User) {
   const ownerProjects = profile.role === "project_manager"
     ? await getDocs(query(collection(database, ...organizationPath(), rootCollectionMap.projects), where("ownerId", "==", user.uid)))
     : null;
-  const memberDocuments = await getDocs(query(collectionGroup(database, "members"), where("userId", "==", user.uid)));
+  const memberDocuments = await getDocs(query(
+    collectionGroup(database, "members"),
+    where("userId", "==", user.uid),
+    where("accessState", "==", "active")
+  ));
 
   ownerProjects?.docs.forEach((item) => {
     projectsById.set(item.id, withProjectRevisionDefaults(item.data() as Project));
@@ -1111,7 +1115,7 @@ export async function createRiskInFirestore(risk: Omit<ProjectRisk, "id">) {
 export async function addProjectMemberInFirestore(projectId: string, userId: string, role: ProjectMember["role"]) {
   const safeProjectId = requirePathSegment(projectId, "projectId");
   const safeUserId = requirePathSegment(userId, "userId");
-  const member: ProjectMember = { id: safeUserId, projectId: safeProjectId, userId: safeUserId, role };
+  const member: ProjectMember = { id: safeUserId, projectId: safeProjectId, userId: safeUserId, role, accessState: "active" };
   await commitProjectMutation(safeProjectId, { changeType: "membership_added", summary: "Added project member.", metadata: { userId: safeUserId, role } }, (transaction, database) => {
     transaction.set(doc(database, ...projectPath(safeProjectId), projectCollectionMap.projectMembers, safeUserId), member);
   });

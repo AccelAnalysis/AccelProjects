@@ -113,8 +113,8 @@ describe("home dashboard selectors", () => {
   it("limits contributor and client-safe views to appropriate accessible content", () => {
     const state = makeState({
       projectMembers: [
-        { id: "member_contributor", projectId: "project_on_track", userId: contributor.id, role: "contributor" },
-        { id: "member_client", projectId: "project_on_track", userId: clientUser.id, role: "observer" }
+        { id: "member_contributor", projectId: "project_on_track", userId: contributor.id, role: "contributor", accessState: "active" },
+        { id: "member_client", projectId: "project_on_track", userId: clientUser.id, role: "observer", accessState: "active" }
       ],
       tasks: [
         task({ id: "contributor_task", projectId: "project_on_track", assigneeId: contributor.id, dueDate: "2026-07-10" }),

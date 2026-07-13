@@ -28,6 +28,12 @@ Run 1 verification found four operational gaps: lifecycle blockers could be bypa
 
 Run 2 retains the Run 1 project routes and adds admin-only organization-client lifecycle routes plus an admin/manager operation-history route. Project actions still write exactly one operation, project version, activity event, and revision. Phase task handling, task dependency removal, and membership reassignment occur in that same transaction. Server blockers cannot be overridden by a client confirmation flag. Browser hard-delete and lifecycle-forgery rules remain denied.
 
+Membership discovery uses an always-present `accessState` (`active` or `removed`) in addition to immutable lifecycle metadata. Removal and restoration update both values in the authoritative transaction. Browser clients cannot change either field, and the collection-group loader queries both the authenticated `userId` and `accessState == active`.
+
+### Membership migration and deployment order
+
+Before deploying the updated application or rules, deploy the new `members(userId, accessState)` collection-group index, run `npm run migrate:membership-access-state` as a dry run with production Admin credentials, review the paths and inferred states, then run `npm run migrate:membership-access-state -- --apply`. The migration maps nested lifecycle state `removed` to `accessState: removed` and every other legacy membership to `active`; it is idempotent and only updates missing/invalid values. Verify that a second dry run reports zero updates before deploying the application and rules together. Missing `accessState` fails closed, so rolling out rules or the new loader before backfill would temporarily hide legacy active memberships. Rollback requires restoring the prior application and rules together; retaining the added field and index is harmless.
+
 ## Known limitations and deferred Run 3 scope
 
 Bulk task trash, complete document/storage lifecycle, task-comment redaction, report supersession, communication-draft lifecycle, scheduled purge, provider cancellation, and client merge remain deferred. Project-wide cascade restoration is conservative: independently trashed child records are never implicitly restored. Full historical report-reference counts require a denormalized reference index; current previews retain immutable snapshots and disclose that preservation without rewriting them. Large operations beyond Firestore transaction limits are blocked rather than partially applied; a background durable worker remains future work.

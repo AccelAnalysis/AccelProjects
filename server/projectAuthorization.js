@@ -19,8 +19,9 @@ export async function loadProjectAccess({ uid, role }, projectId, { database = f
   const isClient = role === "client";
   const isAdmin = role === "admin";
   const isOwnerManager = role === "project_manager" && project.ownerId === uid;
-  const isLeadManager = role === "project_manager" && membership?.role === "lead";
-  const isMember = Boolean(membership);
+  const membershipIsActive = membership?.accessState === "active" && (membership.lifecycle?.state ?? "active") === "active";
+  const isLeadManager = role === "project_manager" && membershipIsActive && membership?.role === "lead";
+  const isMember = Boolean(membershipIsActive);
   const canRead = !isClient && (isAdmin || isOwnerManager || isMember);
   const canManage = !isClient && (isAdmin || isOwnerManager || isLeadManager);
 

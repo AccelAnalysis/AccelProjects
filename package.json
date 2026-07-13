@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run src server",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run firestore.rules.test.ts\"",
+    "migrate:membership-access-state": "node scripts/backfill-membership-access-state.mjs",
     "check:committed-files": "node scripts/check-committed-files.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
