@@ -175,7 +175,10 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
     if (input.action === "archive") lifecycle.archived = { at: timestamp, by: input.actor.id, reason: operation.reason };
     if (["trash", "remove"].includes(input.action)) { lifecycle[input.action === "trash" ? "trashed" : "removed"] = { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }; lifecycle.purgeEligibleAt = deadline; }
     if (input.action === "restore") lifecycle.restored = { at: timestamp, by: input.actor.id };
-    transaction.update(entityRef, { lifecycle });
+    transaction.update(entityRef, {
+      lifecycle,
+      ...(input.entityType === "projectMember" ? { accessState: input.action === "remove" ? "removed" : "active" } : {})
+    });
     if (input.entityType === "task" && input.action === "trash") {
       const dependencies = preview.impact.removeRelationships.find((entry) => entry.entityType === "taskDependency")?.ids || [];
       dependencies.forEach((dependencyId) => transaction.update(projectRef.collection("taskDependencies").doc(dependencyId), { lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", legalHold: false, lastOperationId: opId, removed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } }));

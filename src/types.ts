@@ -176,6 +176,7 @@ export type ProjectMember = {
   projectId: string;
   userId: string;
   role: "sponsor" | "lead" | "contributor" | "observer";
+  accessState: "active" | "removed";
   lifecycle?: RecordLifecycleMetadata;
 };
 

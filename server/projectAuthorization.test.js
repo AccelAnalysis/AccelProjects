@@ -25,10 +25,11 @@ function fakeDb({ project, memberships = {} }) {
 describe("project API authorization", () => {
   const project = { id: "project_1", ownerId: "owner_pm" };
   const memberships = {
-    lead_pm: { id: "lead_pm", userId: "lead_pm", role: "lead" },
-    contributor: { id: "contributor", userId: "contributor", role: "contributor" },
-    viewer: { id: "viewer", userId: "viewer", role: "observer" },
-    client: { id: "client", userId: "client", role: "observer" }
+    lead_pm: { id: "lead_pm", userId: "lead_pm", role: "lead", accessState: "active" },
+    contributor: { id: "contributor", userId: "contributor", role: "contributor", accessState: "active" },
+    viewer: { id: "viewer", userId: "viewer", role: "observer", accessState: "active" },
+    client: { id: "client", userId: "client", role: "observer", accessState: "active" },
+    removed_pm: { id: "removed_pm", userId: "removed_pm", role: "lead", accessState: "removed", lifecycle: { state: "removed" } }
   };
 
   it("allows admin, owner manager, and lead manager to manage communications and calendar events", async () => {
@@ -51,6 +52,8 @@ describe("project API authorization", () => {
     await expect(loadProjectAccess({ uid: "other_pm", role: "project_manager" }, "project_1", { database: fakeDb({ project, memberships }) }))
       .resolves.toMatchObject({ canRead: false, canManageCommunication: false, canManageCalendar: false });
     await expect(loadProjectAccess({ uid: "client", role: "client" }, "project_1", { database: fakeDb({ project, memberships }) }))
+      .resolves.toMatchObject({ canRead: false, canManageCommunication: false, canManageCalendar: false });
+    await expect(loadProjectAccess({ uid: "removed_pm", role: "project_manager" }, "project_1", { database: fakeDb({ project, memberships }) }))
       .resolves.toMatchObject({ canRead: false, canManageCommunication: false, canManageCalendar: false });
   });
 

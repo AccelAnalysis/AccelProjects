@@ -32,14 +32,14 @@ describe("project management permissions", () => {
 
   it("allows lead project manager members", () => {
     const lead = user({ id: "user_lead" });
-    const state = stateWithMember({ id: "member_lead", projectId: project?.id ?? "", userId: lead.id, role: "lead" });
+    const state = stateWithMember({ id: "member_lead", projectId: project?.id ?? "", userId: lead.id, role: "lead", accessState: "active" });
 
     expect(canManageProject("project_manager", lead, project, state)).toBe(true);
   });
 
   it("denies non-lead and unrelated project managers", () => {
     const manager = user({ id: "user_member" });
-    const state = stateWithMember({ id: "member_manager", projectId: project?.id ?? "", userId: manager.id, role: "contributor" });
+    const state = stateWithMember({ id: "member_manager", projectId: project?.id ?? "", userId: manager.id, role: "contributor", accessState: "active" });
 
     expect(canManageProject("project_manager", manager, project, state)).toBe(false);
     expect(canManageProject("project_manager", user({ id: "user_unrelated" }), project, initialProjectState)).toBe(false);

@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     function lifecycleUnchanged() {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["lifecycle"]);
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(["lifecycle", "accessState"]);
     }
 
     function resourceLifecycleActive() {
@@ -68,6 +68,7 @@ service cloud.firestore {
     function isProjectMemberByUserId(organizationId, projectId, userId) {
       return exists(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.userId == userId
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.accessState == "active"
         && (!("lifecycle" in get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data)
           || get(/databases/$(database)/documents/organizations/$(organizationId)/projects/$(projectId)/members/$(userId)).data.lifecycle.state == "active");
     }
@@ -156,8 +157,9 @@ service cloud.firestore {
         && request.resource.data.uploadedFileHash == manifestId;
     }
 
-    function canContributorUpdateAssignedTask(organizationId) {
+    function canContributorUpdateAssignedTask(organizationId, projectId) {
       return isContributorRole(organizationId)
+        && canReadProject(organizationId, projectId)
         && resource.data.assigneeId == request.auth.uid
         && request.resource.data.assigneeId == resource.data.assigneeId
         && request.resource.data.projectId == resource.data.projectId
@@ -280,6 +282,7 @@ service cloud.firestore {
         && signedInUserRole("org_accel_projects") != null
         && ("userId" in resource.data)
         && resource.data.userId == request.auth.uid
+        && resource.data.accessState == "active"
         && resourceLifecycleActive();
     }
 
@@ -470,8 +473,8 @@ service cloud.firestore {
 
         match /members/{memberId} {
           allow read: if canReadProject(organizationId, projectId)
-            || (isSignedIn() && resource.data.userId == request.auth.uid && resourceLifecycleActive());
-          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
+            || (isSignedIn() && resource.data.userId == request.auth.uid && resource.data.accessState == "active" && resourceLifecycleActive());
+          allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated() && request.resource.data.accessState == "active";
           allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
           allow delete: if false;
         }
@@ -488,7 +491,7 @@ service cloud.firestore {
           allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
           allow delete: if false;
           allow update: if lifecycleUnchanged() && (canManageProjectSchedule(organizationId, projectId)
-            || canContributorUpdateAssignedTask(organizationId));
+            || canContributorUpdateAssignedTask(organizationId, projectId));
 
           match /comments/{commentId} {
             allow read: if canReadProject(organizationId, projectId);
