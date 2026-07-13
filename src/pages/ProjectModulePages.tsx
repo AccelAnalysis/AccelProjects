@@ -1,5 +1,5 @@
 import { Bell, CalendarDays, Download, ExternalLink, FileText, Filter, History, KeyRound, Mail, Plus, ShieldCheck, SlidersHorizontal, Upload, UserCircle, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ActivityFeed,
   DocumentHub,
@@ -43,7 +43,7 @@ import { daysBetween, isDateOnly, todayDateOnly } from "../utils/dateOnly";
 import { sortPhases } from "../utils/phaseOrdering";
 import { compareDateOnly } from "../utils/dateOnly";
 import { isLifecycleActive } from "../lifecycle/policy";
-import { LifecycleReasonField, LifecycleStatusBadge, RecordActionsMenu } from "../components/lifecycle/LifecycleComponents";
+import { BulkTaskLifecycleDialog, LifecycleReasonField, LifecycleStatusBadge, RecordActionsMenu } from "../components/lifecycle/LifecycleComponents";
 
 function projectSlices(projectState: ProjectPageProps["projectState"], projectId: string) {
   const project = projectState.projects.find((item) => item.id === projectId);
@@ -269,7 +269,8 @@ export function PlanPage(props: ProjectPageProps) {
     onDeleteMilestone,
     onCreateDependency,
     onUpdateDependency,
-    onDeleteDependency
+    onDeleteDependency,
+    onLifecycleApplied
   } = props;
   const { project, phases, tasks, milestones, dependencies } = projectSlices(projectState, selectedProjectId);
   if (!project) {
@@ -298,6 +299,7 @@ export function PlanPage(props: ProjectPageProps) {
         onCreateDependency={onCreateDependency}
         onUpdateDependency={onUpdateDependency}
         onDeleteDependency={onDeleteDependency}
+        onLifecycleApplied={onLifecycleApplied}
       />
     </section>
   );
@@ -380,6 +382,11 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [phaseFilter, setPhaseFilter] = useState("all");
   const [sortMode, setSortMode] = useState("dueDate");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
+  const bulkTrashTriggerRef = useRef<HTMLElement | null>(null);
+  const project = projectState.projects.find((item) => item.id === selectedProjectId);
+  const closeBulkTrash = () => { setBulkTrashOpen(false); queueMicrotask(() => bulkTrashTriggerRef.current?.focus()); };
 
   const filtersActive = statusFilter !== "all" || ownerFilter !== "all" || phaseFilter !== "all";
   const filteredTasks = useMemo(() => tasks
@@ -461,6 +468,7 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
           </select>
         </label>
       </div>
+      {canEdit && selectedTaskIds.size ? <div className="bulk-action-bar"><strong>{selectedTaskIds.size} selected</strong><button className="secondary-button compact" onClick={() => setSelectedTaskIds(new Set(filteredTasks.map((task) => task.id)))} type="button">Select visible</button><button className="secondary-button compact" onClick={() => setSelectedTaskIds(new Set())} type="button">Clear</button><button className="danger-button compact" onClick={(event) => { bulkTrashTriggerRef.current = event.currentTarget; setBulkTrashOpen(true); }} type="button">Trash selected</button></div> : null}
       <TaskTable
         tasks={filteredTasks}
         phases={phases}
@@ -469,8 +477,11 @@ export function TasksPage({ projectState, selectedProjectId, canEdit, canEditTas
         canEditTask={canEditTask}
         onOpenTask={onOpenTask}
         onUpdateTask={onUpdateTask}
+        selectedTaskIds={selectedTaskIds}
+        onToggleTask={canEdit ? (taskId) => setSelectedTaskIds((current) => { const next = new Set(current); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }) : undefined}
         renderLifecycleActions={canEdit ? (task) => <RecordActionsMenu actions={["trash"]} entityId={task.id} entityType="task" label={task.title} lifecycle={task.lifecycle} onApplied={onLifecycleApplied} projectId={task.projectId} projectRevision={projectState.projects.find((project) => project.id === task.projectId)?.revision ?? 1} role={role} /> : undefined}
       />
+      {bulkTrashOpen && project ? <BulkTaskLifecycleDialog projectId={project.id} projectRevision={project.revision ?? 1} taskIds={[...selectedTaskIds].sort()} onApplied={async () => { await onLifecycleApplied(); setSelectedTaskIds(new Set()); closeBulkTrash(); }} onClose={closeBulkTrash} /> : null}
     </section>
   );
 }
@@ -931,9 +942,9 @@ export function ReportsPage({ projectState, selectedProjectId, clientPreview, ca
   const canManageReports = canViewInternal && canManage && !clientPreview;
 
   useEffect(() => {
-    setLocalReports(reports);
-    setLocalSnapshots(reportSnapshots);
-  }, [reports, reportSnapshots]);
+    setLocalReports(projectState.clientProgressReports.filter((report) => report.projectId === selectedProjectId));
+    setLocalSnapshots(projectState.clientReportSnapshots.filter((snapshot) => snapshot.projectId === selectedProjectId));
+  }, [projectState.clientProgressReports, projectState.clientReportSnapshots, selectedProjectId]);
 
   if (!project) {
     return <ProjectUnavailable />;

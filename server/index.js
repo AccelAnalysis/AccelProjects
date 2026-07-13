@@ -57,6 +57,9 @@ import { orderReceivedSmsTemplate } from "./smsTemplates.js";
 import { DocumentServiceError, downloadDocumentVersion, listDocumentVersions, replaceDocumentVersion, uploadDocument } from "./documentService.js";
 import { CommentError, createControlledComment, editControlledComment, redactComment } from "./commentModerationService.js";
 import { createPurgeJob, lifecycleDiagnostics, LifecycleAdminError, runPurgeJob, setLegalHold } from "./lifecycleAdminService.js";
+import { applyBulkTaskLifecycle, BulkLifecycleError, cancelBulkLifecycleJob, previewBulkTaskLifecycle, runBulkLifecycleJob } from "./bulkLifecycleService.js";
+import { cancelLargeLifecycleJob, createFileLifecycleJob, LargeLifecycleError, runLargeLifecycleJob } from "./largeLifecycleService.js";
+import { scanStorageIntegrity, StorageIntegrityError } from "./storageIntegrityService.js";
 import { validateTwilioSmsConfig } from "./twilioSmsConfig.js";
 import { sendTwilioSms } from "./twilioSmsService.js";
 import {
@@ -348,13 +351,26 @@ function lifecycleFailure(response, error) {
   return response.status(status).json({ success: false, error: error instanceof LifecycleError ? error.code : "lifecycle_operation_failed" });
 }
 
+function bulkLifecycleFailure(response, error) { return response.status(error instanceof BulkLifecycleError ? error.status : 500).json({ success: false, error: error instanceof BulkLifecycleError ? error.code : "bulk_lifecycle_failed" }); }
+function bulkLifecycleInput(request) { return { ...request.body, projectId: request.params.projectId, actor: { id: request.auth.uid, role: request.auth.profile.role } }; }
+app.post("/api/projects/:projectId/lifecycle/tasks/bulk/impact", requireProjectCommunication, async (request, response) => { try { return response.json(await previewBulkTaskLifecycle(bulkLifecycleInput(request))); } catch (error) { return bulkLifecycleFailure(response, error); } });
+app.post("/api/projects/:projectId/lifecycle/tasks/bulk/actions", requireProjectCommunication, async (request, response) => { try { const result = await applyBulkTaskLifecycle(bulkLifecycleInput(request)); return response.status(result.queued ? 202 : 200).json(result); } catch (error) { return bulkLifecycleFailure(response, error); } });
+app.post("/api/projects/:projectId/updates/lifecycle-jobs", requireProjectCommunication, async (request, response) => { try { const result = await createFileLifecycleJob({ ...request.body, projectId: request.params.projectId, actor: { id: request.auth.uid, role: request.auth.profile.role } }); return response.status(202).json(result); } catch (error) { return lifecycleJobFailure(response, error); } });
+
 app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/impact", requireProjectCommunication, async (request, response) => {
   try { return response.json(await previewLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
 });
 
 app.post("/api/projects/:projectId/lifecycle/:entityType/:entityId/actions", requireProjectCommunication, async (request, response) => {
-  try { return response.json(await applyLifecycle(lifecycleInput(request))); } catch (error) { return lifecycleFailure(response, error); }
+  try { const result = await applyLifecycle(lifecycleInput(request)); return response.status(result.queued ? 202 : 200).json(result); } catch (error) { return lifecycleFailure(response, error); }
 });
+
+function lifecycleJobFailure(response, error) {
+  if (error instanceof LargeLifecycleError) return response.status(error.status).json({ success: false, error: error.code });
+  return bulkLifecycleFailure(response, error);
+}
+app.post("/api/admin/lifecycle/jobs/:jobId/run", requireAdmin, async (request, response) => { try { return response.json({ job: await runLargeLifecycleJob(request.params.jobId) }); } catch (error) { return lifecycleJobFailure(response, error); } });
+app.post("/api/admin/lifecycle/jobs/:jobId/cancel", requireAdmin, async (request, response) => { try { return response.json({ job: await cancelLargeLifecycleJob(request.params.jobId) }); } catch (error) { return lifecycleJobFailure(response, error); } });
 
 function documentFailure(response, error) { return response.status(error instanceof DocumentServiceError ? error.status : 500).json({ success: false, error: error instanceof DocumentServiceError ? error.code : "document_operation_failed" }); }
 app.post("/api/projects/:projectId/documents", requireProjectCommunication, async (request, response) => { try { return response.status(201).json(await uploadDocument(request.params.projectId, { uid: request.auth.uid, role: request.auth.profile.role }, request.body)); } catch (error) { return documentFailure(response, error); } });
@@ -394,6 +410,7 @@ app.post("/api/admin/lifecycle/legal-hold", requireAdmin, async (request, respon
 app.post("/api/admin/lifecycle/purge-jobs", requireAdmin, async (request, response) => { try { return response.status(202).json({ job: await createPurgeJob(request.body, { uid: request.auth.uid }) }); } catch (error) { return lifecycleAdminFailure(response, error); } });
 app.post("/api/admin/lifecycle/purge-jobs/:jobId/run", requireAdmin, async (request, response) => { try { return response.json({ job: await runPurgeJob(request.params.jobId) }); } catch (error) { return lifecycleAdminFailure(response, error); } });
 app.get("/api/admin/lifecycle/diagnostics", requireAdmin, async (_request, response) => { try { return response.json(await lifecycleDiagnostics()); } catch (error) { return lifecycleAdminFailure(response, error); } });
+app.get("/api/admin/lifecycle/storage-integrity", requireAdmin, async (request, response) => { try { return response.json(await scanStorageIntegrity({ cursor: request.query.cursor, metadataCursor: request.query.metadataCursor, pageSize: request.query.pageSize, verifyChecksums: request.query.verifyChecksums !== "false" })); } catch (error) { return response.status(error instanceof StorageIntegrityError ? error.status : 500).json({ success: false, error: error instanceof StorageIntegrityError ? error.code : "storage_integrity_failed" }); } });
 
 app.use("/api/portal", (_request, response, next) => {
   response.setHeader("Cache-Control", "private, no-store");

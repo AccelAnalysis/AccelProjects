@@ -771,16 +771,22 @@ function AppShell() {
     async function loadState() {
       try {
         await ensureFirestoreUserProfile(currentUser);
-        const [profile, state] = await Promise.all([
-          loadCurrentUserProfileFromFirestore(currentUser, { ensureProfile: false }),
-          loadProjectStateFromFirestore(currentUser, { ensureProfile: false })
-        ]);
+        const profile = await loadCurrentUserProfileFromFirestore(currentUser, { ensureProfile: false });
 
         if (!active) {
           return;
         }
 
         setUserProfile(profile);
+        if (profile.role === "client") {
+          setProjectState(emptyProjectState);
+          setSelectedProjectId("");
+          setProjectError("");
+          return;
+        }
+
+        const state = await loadProjectStateFromFirestore(currentUser, { ensureProfile: false });
+        if (!active) return;
         setProjectState(state);
         setSelectedProjectId((current) => (
           current && state.projects.some((project) => project.id === current) ? current : state.projects[0]?.id ?? ""

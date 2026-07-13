@@ -1,5 +1,7 @@
 # Record lifecycle operational entities (Run 2)
 
+> Historical note: the completion integration closes the bulk-task, durable-job, and historical-reference deferrals below. Use `record-lifecycle-completion.md` for current behavior.
+
 ## Dependency and baseline
 
 This stacked run is based on `codex/record-lifecycle-foundation-run-1` commit `a2536efe5fc02946a0be51826da760830d6ff750` and depends on draft PR #17. It must not merge before Run 1.

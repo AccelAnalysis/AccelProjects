@@ -142,6 +142,28 @@ describe("project update provenance and planning", () => {
 
     expect(plan.validationIssues.filter((issue) => issue.severity === "error")).toHaveLength(0);
     expect(plan.removals).toHaveLength(0);
+    expect(plan.modifications).toHaveLength(1);
+    expect(plan.modifications[0].fields.map((field) => field.field)).toEqual(["lifecycle"]);
+    expect(plan.executionMode).toBe("atomic");
     expect(plan.resultCanonicalPackage.milestones.find((milestone) => milestone.id === milestoneId)?.lifecycle?.state).toBe("trashed");
+  });
+
+  it("delegates a large lifecycle-only schema 1.2 update to a durable job", async () => {
+    const template = initialProjectState.milestones.find((milestone) => milestone.projectId === projectId)!;
+    const milestones = Array.from({ length: 446 }, (_, index) => ({ ...template, id: `lifecycle_milestone_${String(index).padStart(3, "0")}`, name: `Lifecycle milestone ${index}` }));
+    const currentState = { ...initialProjectState, milestones: [...initialProjectState.milestones.filter((item) => item.projectId !== projectId), ...milestones] };
+    const originalPackage = createCanonicalProjectExport(currentState, projectId, "2026-07-10T12:00:00.000Z", { exportSnapshotId: "export_snapshot_large" });
+    const packageJson = stringifyCanonicalProjectExport(originalPackage);
+    const sourceSnapshot: ProjectExportSnapshot = { id: "export_snapshot_large", projectId, baseRevision: originalPackage.baseRevision, packageId: originalPackage.packageId, sourceHash: await hashProjectExport(originalPackage), snapshotType: "manual_export", createdBy: actor.id, createdAt: "2026-07-10T12:00:01.000Z", packageJson };
+    const uploadedPackage = structuredClone(originalPackage);
+    uploadedPackage.milestones = [];
+    uploadedPackage.lifecycleOperations = milestones.map((milestone) => ({ entityType: "milestones" as const, entityId: milestone.id, action: "archive" as const, reason: "Bulk archive", expectedPriorState: "active" as const }));
+
+    const plan = await createProjectUpdatePlan({ projectId, originalPackage, uploadedPackage, sourceSnapshot, currentState, currentUser: actor, uploadedFileHash: "large-file-hash", applyTimestamp: "2026-07-10T12:30:00.000Z", generateId: (_entityType, id) => id });
+
+    expect(plan.validationIssues.filter((item) => item.severity === "error")).toHaveLength(0);
+    expect(plan.expectedWriteCount).toBe(451);
+    expect(plan.executionMode).toBe("durable_lifecycle_job");
+    expect(plan.modifications).toHaveLength(446);
   });
 });

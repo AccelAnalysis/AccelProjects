@@ -60,6 +60,32 @@ export function applyRecordLifecycle(projectId: string, entityType: LifecycleEnt
   return request<{ operation: LifecycleOperation; duplicate: boolean }>(path, { method: "POST", body: JSON.stringify(input) });
 }
 
+export type BulkTaskLifecycleRequest = Omit<LifecycleRequest, "strategy" | "destinationPhaseId" | "replacementUserId" | "confirmed"> & {
+  taskIds: string[];
+  sourceOperationId?: string;
+  resolutionPlan?: { allowPartial?: boolean; skipDependencyIds?: string[]; moveTaskPhaseIds?: Record<string, string> };
+};
+
+export function previewBulkTaskLifecycle(projectId: string, input: Omit<BulkTaskLifecycleRequest, "previewToken">) {
+  return request<{ projectRevision: number; taskIds: string[]; impact: LifecycleImpact & { operationalReferences?: LifecycleImpact["transition"] }; previewToken: string }>(`/api/projects/${projectId}/lifecycle/tasks/bulk/impact`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function applyBulkTaskLifecycle(projectId: string, input: BulkTaskLifecycleRequest) {
+  return request<{ operation?: LifecycleOperation; job?: Record<string, unknown>; duplicate: boolean; queued: boolean }>(`/api/projects/${projectId}/lifecycle/tasks/bulk/actions`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function queueProjectFileLifecycleUpdate(projectId: string, input: {
+  expectedProjectRevision: number;
+  sourceSnapshotId: string;
+  sourcePackageId: string;
+  sourceSnapshotHash: string;
+  uploadedFileHash: string;
+  resultStateHash: string;
+  operations: Array<{ entityType: string; entityId: string; action: string; reason: string; expectedPriorState?: string }>;
+}) {
+  return request<{ job: { id: string; state: string; progress: { completed: number; total: number } }; duplicate: boolean; queued: true }>(`/api/projects/${projectId}/updates/lifecycle-jobs`, { method: "POST", body: JSON.stringify(input) });
+}
+
 export function listLifecycleOperations() {
   return request<{ operations: LifecycleOperation[] }>("/api/lifecycle/operations");
 }
@@ -78,6 +104,7 @@ export function updateLegalHold(input: { projectId?: string; entityType: Lifecyc
 export function createLifecyclePurgeJob(input: { projectId?: string; entityType: LifecycleEntityType; entityId: string; idempotencyKey: string }) { return request<{ job: Record<string, unknown> }>("/api/admin/lifecycle/purge-jobs", { method: "POST", body: JSON.stringify(input) }); }
 export function runLifecyclePurgeJob(jobId: string) { return request<{ job: Record<string, unknown> }>(`/api/admin/lifecycle/purge-jobs/${jobId}/run`, { method: "POST" }); }
 export function getLifecycleDiagnostics() { return request<Record<string, unknown>>("/api/admin/lifecycle/diagnostics"); }
+export function getStorageIntegrityDiagnostics(input: { cursor?: string; metadataCursor?: string; pageSize?: number; verifyChecksums?: boolean } = {}) { const params = new URLSearchParams(); if (input.cursor) params.set("cursor", input.cursor); if (input.metadataCursor) params.set("metadataCursor", input.metadataCursor); if (input.pageSize) params.set("pageSize", String(input.pageSize)); if (input.verifyChecksums === false) params.set("verifyChecksums", "false"); return request<Record<string, unknown>>(`/api/admin/lifecycle/storage-integrity?${params}`); }
 export function withdrawClientProgressReport(projectId: string, reportId: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/withdraw`, { method: "POST" }); }
 export function voidClientProgressReport(projectId: string, reportId: string, reason: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/void`, { method: "POST", body: JSON.stringify({ reason }) }); }
 export function supersedeClientProgressReport(projectId: string, reportId: string) { return request<ClientProgressReport>(`/api/projects/${projectId}/reports/${reportId}/supersede`, { method: "POST" }); }

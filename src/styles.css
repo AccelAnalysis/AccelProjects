@@ -3382,7 +3382,13 @@ td span {
 
 .content-area {
   gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   padding: 14px 16px 18px;
+}
+
+.content-area > * {
+  min-width: 0;
 }
 
 .project-context-bar {
@@ -3443,6 +3449,11 @@ td span {
   border-color: var(--ap-border);
   border-radius: var(--ap-radius-lg);
   box-shadow: none;
+}
+
+.panel {
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .action-button,

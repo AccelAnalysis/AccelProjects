@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -40,8 +42,17 @@ jobs:
       - name: Firestore security rules tests
         run: npm run test:rules
 
+      - name: Storage security rules tests
+        run: npm run test:storage-rules
+
+      - name: Lifecycle emulator acceptance tests
+        run: npm run test:lifecycle-acceptance
+
       - name: Production build
         run: npm run build
 
       - name: Committed-file guard
         run: npm run check:committed-files
+
+      - name: Diff whitespace check
+        run: git diff --check origin/${{ github.base_ref || 'main' }}...HEAD

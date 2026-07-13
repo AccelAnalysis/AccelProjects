@@ -265,6 +265,10 @@ describe("Firestore operational readiness rules", () => {
     await assertFails(updateDoc(doc(dbFor("owner_pm"), ...orgPath("projects", projectId, "members", "contributor")), { accessState: "removed" }));
     await assertFails(updateDoc(projectRef("admin"), { lifecycle: { schemaVersion: 1, state: "archived", retentionClass: "business_7y", legalHold: false, lastOperationId: "forged" } }));
     await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("recordLifecycleOperations", "forged")), { id: "forged", actorId: "admin" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecycleJobs", "forged")), { id: "forged", state: "completed" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecycleJobs", "job_1", "items", "forged")), { path: "forged", pending: false }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("lifecyclePurgeJobs", "forged")), { id: "forged", state: "completed" }));
+    await assertFails(setDoc(doc(dbFor("admin"), ...orgPath("projects", projectId, "documents", "doc_1", "versions", "forged")), { storagePath: "forged" }));
   });
 
   it("keeps comment creation, editing, redaction history, and deletion server controlled", async () => {

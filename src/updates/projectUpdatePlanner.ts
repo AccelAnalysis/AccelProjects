@@ -434,9 +434,14 @@ export async function createProjectUpdatePlan(input: ProjectUpdatePlannerInput):
 
   const changeCounts = countChanges(changes);
   const expectedWriteCount = changes.length + 5;
+  const lifecycleTargets = new Set((input.uploadedPackage.schemaVersion === "1.2" ? input.uploadedPackage.lifecycleOperations ?? [] : []).map((operation) => `${operation.entityType}:${operation.entityId}`));
+  const lifecycleOnly = lifecycleTargets.size > 0
+    && changes.length === lifecycleTargets.size
+    && changes.every((change) => lifecycleTargets.has(`${change.entityType}:${change.entityId}`) && change.kind === "modified" && change.fields.length === 1 && change.fields[0].field === "lifecycle");
+  const executionMode = expectedWriteCount > maxAtomicWrites && lifecycleOnly ? "durable_lifecycle_job" : "atomic";
 
-  if (expectedWriteCount > maxAtomicWrites) {
-    issues.push(issue("revision_too_large_for_atomic_apply", "This update is too large to apply safely as one atomic project revision."));
+  if (expectedWriteCount > maxAtomicWrites && !lifecycleOnly) {
+    issues.push(issue("revision_too_large_for_atomic_apply", "This mixed-content update is too large for one atomic revision. Split non-lifecycle edits into smaller files; large lifecycle-only updates are queued durably."));
   }
 
   if (changeCounts.added + changeCounts.modified + changeCounts.removed === 0) {
@@ -481,6 +486,7 @@ export async function createProjectUpdatePlan(input: ProjectUpdatePlannerInput):
   const warnings = issues.filter((item) => item.severity === "warning");
 
   return {
+    executionMode,
     projectId: input.projectId,
     baseRevision: input.originalPackage.baseRevision,
     resultRevision: input.originalPackage.baseRevision + 1,

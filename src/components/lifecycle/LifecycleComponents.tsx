@@ -1,6 +1,6 @@
 import { Archive, MoreHorizontal, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { applyRecordLifecycle, previewRecordLifecycle } from "../../data/api";
+import { applyBulkTaskLifecycle, applyRecordLifecycle, previewBulkTaskLifecycle, previewRecordLifecycle } from "../../data/api";
 import { normalizeLifecycle } from "../../lifecycle/policy";
 import type { LifecycleAction, LifecycleEntityType, LifecycleImpact, RecordLifecycleMetadata } from "../../lifecycle/types";
 import type { UserRole } from "../../types";
@@ -62,6 +62,7 @@ export function LifecycleImpactDialog({ request, onClose }: { request: ActionReq
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [working, setWorking] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const requiresTyped = request.action === "purge" || request.entityType === "project" || (request.entityType === "risk" && request.action === "trash");
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export function LifecycleImpactDialog({ request, onClose }: { request: ActionReq
   async function loadImpact() {
     setWorking(true); setError("");
     try {
-      const result = await previewRecordLifecycle(request.projectId, request.entityType, request.entityId, { action: request.action, expectedProjectRevision: request.projectRevision, idempotencyKey: crypto.randomUUID(), reason: { code: "user_requested", note: reason || undefined }, strategy, ...(request.entityType === "phase" ? { destinationPhaseId: resolutionId } : {}), ...(request.entityType === "projectMember" ? { replacementUserId: resolutionId } : {}) });
+      const result = await previewRecordLifecycle(request.projectId, request.entityType, request.entityId, { action: request.action, expectedProjectRevision: request.projectRevision, idempotencyKey, reason: { code: "user_requested", note: reason || undefined }, strategy, ...(request.entityType === "phase" ? { destinationPhaseId: resolutionId } : {}), ...(request.entityType === "projectMember" ? { replacementUserId: resolutionId } : {}) });
       setImpact(result.impact); setToken(result.previewToken);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Impact preview failed."); }
     finally { setWorking(false); }
@@ -85,7 +86,7 @@ export function LifecycleImpactDialog({ request, onClose }: { request: ActionReq
     if (!impact || !token || !reason.trim() || (requiresTyped && typed !== request.label)) return;
     setWorking(true); setError("");
     try {
-      await applyRecordLifecycle(request.projectId, request.entityType, request.entityId, { action: request.action, expectedProjectRevision: request.projectRevision, idempotencyKey: crypto.randomUUID(), reason: { code: "user_requested", note: reason.trim() }, previewToken: token, strategy, confirmed: true, ...(request.entityType === "phase" ? { destinationPhaseId: resolutionId } : {}), ...(request.entityType === "projectMember" ? { replacementUserId: resolutionId } : {}) });
+      await applyRecordLifecycle(request.projectId, request.entityType, request.entityId, { action: request.action, expectedProjectRevision: request.projectRevision, idempotencyKey, reason: { code: "user_requested", note: reason.trim() }, previewToken: token, strategy, confirmed: true, ...(request.entityType === "phase" ? { destinationPhaseId: resolutionId } : {}), ...(request.entityType === "projectMember" ? { replacementUserId: resolutionId } : {}) });
       await request.onApplied(); onClose();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Lifecycle action failed.";
@@ -94,7 +95,7 @@ export function LifecycleImpactDialog({ request, onClose }: { request: ActionReq
     } finally { setWorking(false); }
   }
 
-  return <dialog aria-labelledby={titleId} className="lifecycle-dialog" ref={dialogRef}>
+  return <dialog aria-labelledby={titleId} className="lifecycle-dialog" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }} ref={dialogRef}>
     <div className="lifecycle-dialog-header"><div><p className="eyebrow">Lifecycle impact</p><h2 id={titleId}>{request.action} {request.label}</h2></div><button aria-label="Close lifecycle dialog" className="icon-button" onClick={onClose} type="button"><X aria-hidden="true" size={18} /></button></div>
     <LifecycleReasonField disabled={working || Boolean(impact)} onChange={setReason} value={reason} />
     {(["phase", "projectMember", "task"] as LifecycleEntityType[]).includes(request.entityType) ? <ReassignmentPlanner onChange={setStrategy} strategy={strategy}>{strategy === "reassign" ? <label className="lifecycle-field"><span>{request.entityType === "phase" ? "Destination phase ID" : "Replacement user ID"}</span><input value={resolutionId} onChange={(event) => setResolutionId(event.target.value)} /></label> : null}</ReassignmentPlanner> : null}
@@ -114,3 +115,13 @@ export function RecordActionsMenu(props: Omit<ActionRequest, "action"> & { actio
 }
 
 export function RestoreAction(props: Omit<ActionRequest, "action">) { return <RecordActionsMenu {...props} actions={["restore"]} />; }
+
+export function BulkTaskLifecycleDialog({ projectId, projectRevision, taskIds, onApplied, onClose }: { projectId: string; projectRevision: number; taskIds: string[]; onApplied: () => Promise<void> | void; onClose: () => void }) {
+  const titleId = useId(); const dialogRef = useRef<HTMLDialogElement>(null);
+  const [reason, setReason] = useState(""); const [typed, setTyped] = useState(""); const [impact, setImpact] = useState<LifecycleImpact | null>(null); const [token, setToken] = useState(""); const [error, setError] = useState(""); const [working, setWorking] = useState(false); const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const expected = `TRASH ${taskIds.length} TASKS`;
+  useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); const cancel = (event: Event) => { event.preventDefault(); onClose(); }; dialog?.addEventListener("cancel", cancel); return () => dialog?.removeEventListener("cancel", cancel); }, [onClose]);
+  async function preview() { setWorking(true); setError(""); try { const result = await previewBulkTaskLifecycle(projectId, { action: "trash", expectedProjectRevision: projectRevision, idempotencyKey, reason: { code: "bulk_task_trash", note: reason }, taskIds }); setImpact(result.impact); setToken(result.previewToken); } catch (cause) { setError(cause instanceof Error ? cause.message : "Bulk impact preview failed."); } finally { setWorking(false); } }
+  async function apply() { if (!impact || !token || !reason.trim() || (impact.requiresTypedConfirmation && typed !== expected)) return; setWorking(true); setError(""); try { const result = await applyBulkTaskLifecycle(projectId, { action: "trash", expectedProjectRevision: projectRevision, idempotencyKey, reason: { code: "bulk_task_trash", note: reason.trim() }, taskIds, previewToken: token }); await onApplied(); if (result.queued) setError("Large operation queued for durable server execution."); else onClose(); } catch (cause) { const message = cause instanceof Error ? cause.message : "Bulk lifecycle action failed."; setError(message.includes("stale_preview") || message.includes("revision_conflict") ? "The project changed after preview. Run impact analysis again." : message); if (message.includes("stale") || message.includes("revision")) { setImpact(null); setToken(""); } } finally { setWorking(false); } }
+  return <dialog aria-labelledby={titleId} className="lifecycle-dialog" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }} ref={dialogRef}><div className="lifecycle-dialog-header"><div><p className="eyebrow">Bulk lifecycle impact</p><h2 id={titleId}>Trash {taskIds.length} selected tasks</h2></div><button aria-label="Close bulk lifecycle dialog" className="icon-button" onClick={onClose} type="button"><X aria-hidden="true" size={18} /></button></div><LifecycleReasonField disabled={working || Boolean(impact)} onChange={setReason} value={reason} />{!impact ? <button className="secondary-button" disabled={working || !reason.trim()} onClick={() => void preview()} type="button">{working ? "Analyzing…" : "Preview entire selection"}</button> : <div className="lifecycle-impact"><ImpactGroup items={impact.transition} title="Tasks transitioned" /><ImpactGroup items={impact.removeRelationships} title="Dependencies transitioned" /><ImpactGroup items={impact.retainImmutable} title="Retained history" />{impact.blockers.map((item) => <p className="lifecycle-notice danger" key={item}>{item.replaceAll("_", " ")}</p>)}{impact.warnings.map((item) => <p className="lifecycle-notice" key={item}>{item.replaceAll("_", " ")}</p>)}</div>}{impact?.requiresTypedConfirmation ? <TypedConfirmationField disabled={working} expected={expected} onChange={setTyped} value={typed} /> : null}<LifecycleOperationResult error={error} /><div className="button-row lifecycle-dialog-actions"><button className="secondary-button" disabled={working} onClick={onClose} type="button">Cancel</button>{impact ? <button className="danger-button" disabled={working || !reason.trim() || impact.blockers.length > 0 || (impact.requiresTypedConfirmation && typed !== expected)} onClick={() => void apply()} type="button">{working ? "Applying…" : "Confirm bulk trash"}</button> : null}</div></dialog>;
+}

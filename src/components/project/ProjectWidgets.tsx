@@ -28,7 +28,7 @@ import type {
   User
 } from "../../types";
 import { mockTeamCapacity } from "../../data/projectMockData";
-import { addDays, formatDateOnly, todayDateOnly } from "../../utils/dateOnly";
+import { addDays, formatDateOnly, isDateOnly, todayDateOnly } from "../../utils/dateOnly";
 import { compareDateOnly } from "../../utils/dateOnly";
 import { getPhaseSequenceLabel, sortPhases } from "../../utils/phaseOrdering";
 import { calculateScheduleRange } from "../../utils/scheduleRange";
@@ -45,7 +45,10 @@ export const taskStatusLabels: Record<Task["status"], string> = {
 };
 
 export function formatDate(date: string | null | undefined) {
-  return date ? formatDateOnly(date) : "Unscheduled";
+  if (!date) return "Unscheduled";
+  if (isDateOnly(date)) return formatDateOnly(date);
+  const value = new Date(date);
+  return Number.isNaN(value.getTime()) ? "Date unavailable" : value.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
 export function getUserName(users: User[], userId: string | null) {
@@ -184,7 +187,9 @@ export function TaskTable({
   canEditTask,
   onOpenTask,
   onUpdateTask,
-  renderLifecycleActions
+  renderLifecycleActions,
+  selectedTaskIds,
+  onToggleTask
 }: {
   tasks: Task[];
   phases: Phase[];
@@ -194,12 +199,15 @@ export function TaskTable({
   onOpenTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<Task>) => void;
   renderLifecycleActions?: (task: Task) => ReactNode;
+  selectedTaskIds?: Set<string>;
+  onToggleTask?: (taskId: string) => void;
 }) {
   return (
     <div className="table-wrap">
       <table className="task-table">
         <thead>
           <tr>
+            {onToggleTask ? <th scope="col">Select</th> : null}
             <th>Task Name</th>
             <th>Phase</th>
             <th>Assignee</th>
@@ -215,6 +223,7 @@ export function TaskTable({
 
             return (
               <tr key={task.id}>
+                {onToggleTask ? <td><input aria-label={`Select ${task.title}`} checked={selectedTaskIds?.has(task.id) ?? false} onChange={() => onToggleTask(task.id)} type="checkbox" /></td> : null}
                 <td>
                   <strong>{task.title}</strong>
                   <span>{task.description}</span>

@@ -33,6 +33,7 @@ import {
   type TimelineZoomMode
 } from "../../../scheduling/timelineScale";
 import { taskStatusLabels } from "../ProjectWidgets";
+import { BulkTaskLifecycleDialog } from "../../lifecycle/LifecycleComponents";
 
 const rowHeight = 48;
 const headerHeight = 54;
@@ -99,6 +100,7 @@ type Props = {
   onCreateDependency: (dependency: Omit<TaskDependency, "id">) => Promise<TaskDependency | null>;
   onUpdateDependency: (dependencyId: string, updates: Partial<TaskDependency>) => Promise<void>;
   onDeleteDependency: (dependencyId: string) => Promise<void>;
+  onLifecycleApplied?: () => Promise<void> | void;
 };
 
 export function PlanWorkspace({
@@ -120,7 +122,8 @@ export function PlanWorkspace({
   onDeleteMilestone,
   onCreateDependency,
   onUpdateDependency,
-  onDeleteDependency
+  onDeleteDependency,
+  onLifecycleApplied = async () => undefined
 }: Props) {
   const [viewState, setViewState] = useProjectPlanView(project.id, tasks);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
@@ -137,6 +140,8 @@ export function PlanWorkspace({
   const [dependencyManagerExpanded, setDependencyManagerExpanded] = useState(false);
   const [hierarchyCollapsed, setHierarchyCollapsed] = useState(false);
   const [bulkShiftDays, setBulkShiftDays] = useState(1);
+  const [bulkTrashOpen, setBulkTrashOpen] = useState(false);
+  const bulkTrashTriggerRef = useRef<HTMLElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState(900);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const viewButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -618,8 +623,10 @@ export function PlanWorkspace({
             conflicts: [],
             message
           })}
+          onTrash={() => { bulkTrashTriggerRef.current = document.activeElement as HTMLElement | null; setBulkTrashOpen(true); }}
         />
       ) : null}
+      {bulkTrashOpen ? <BulkTaskLifecycleDialog projectId={project.id} projectRevision={project.revision ?? 1} taskIds={[...selectedTaskIds].sort()} onApplied={async () => { await onLifecycleApplied(); setSelectedTaskIds(new Set()); setBulkTrashOpen(false); queueMicrotask(() => bulkTrashTriggerRef.current?.focus()); }} onClose={() => { setBulkTrashOpen(false); queueMicrotask(() => bulkTrashTriggerRef.current?.focus()); }} /> : null}
 
       <div
         ref={scrollRef}
@@ -1421,7 +1428,8 @@ function BulkActionBar({
   onShift,
   onUnschedule,
   onSchedule,
-  onBatchField
+  onBatchField,
+  onTrash
 }: {
   selectedCount: number;
   users: User[];
@@ -1435,6 +1443,7 @@ function BulkActionBar({
   onUnschedule: () => void;
   onSchedule: (startDate: string) => void;
   onBatchField: (updates: Pick<Partial<Task>, "assigneeId" | "status" | "priority" | "phaseId">, message: string) => void;
+  onTrash: () => void;
 }) {
   const [scheduleDate, setScheduleDate] = useState(todayDateOnly());
 
@@ -1456,6 +1465,7 @@ function BulkActionBar({
           </label>
           <button className="secondary-button compact" type="button" onClick={() => onSchedule(scheduleDate)}>Schedule</button>
           <button className="secondary-button compact" type="button" onClick={onUnschedule}>Unschedule</button>
+          <button className="danger-button compact" type="button" onClick={onTrash}><Trash2 size={16} aria-hidden="true" /> Trash selected</button>
           <details className="bulk-more-menu">
             <summary className="secondary-button compact" aria-label="More bulk actions">
               <MoreHorizontal size={16} aria-hidden="true" />

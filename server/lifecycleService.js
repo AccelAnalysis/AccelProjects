@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { API_ORGANIZATION_ID, getAdminApp } from "./apiAuth.js";
+import { scanProjectReferences } from "./referenceImpactService.js";
+import { createLargeLifecycleJob } from "./largeLifecycleService.js";
 
 const retentionDays = 30;
 const immutableTypes = new Set(["deliveryAttempt", "reportSnapshot", "reportArtifact", "activityEvent", "projectVersion", "exportSnapshot", "updateManifest", "importManifest"]);
@@ -40,7 +42,7 @@ function targetRef(db, projectId, entityType, entityId) {
 
 async function buildImpact(db, projectId, entityType, entityId, { action, strategy, destinationPhaseId, replacementUserId } = {}) {
   const project = db.doc(`organizations/${API_ORGANIZATION_ID}/projects/${projectId}`);
-  const transition = [], removeRelationships = [], retainImmutable = [], blockers = [], warnings = [];
+  const transition = [], reassign = [], removeRelationships = [], retainImmutable = [], blockers = [], warnings = [];
   if (entityType === "project") {
     for (const [type, collection] of [["phase", "phases"], ["task", "tasks"], ["milestone", "milestones"], ["risk", "risks"], ["document", "documents"]]) {
       const snapshot = await project.collection(collection).get(); transition.push(item(type, snapshot.docs.map((doc) => doc.id)));
@@ -114,6 +116,13 @@ async function buildImpact(db, projectId, entityType, entityId, { action, strate
     const document = await project.collection("documents").doc(entityId).get(); const data = document.data();
     if (data?.managed) { const version = await document.ref.collection("versions").doc(data.currentVersionId).get(); if (!version.exists) blockers.push("document_version_missing"); else { try { const [exists] = await getStorage(getAdminApp()).bucket(process.env.FIREBASE_STORAGE_BUCKET).file(version.data().storagePath).exists(); if (!exists) blockers.push("storage_object_missing"); } catch { blockers.push("storage_verification_failed"); } } }
   }
+  if (!["project", "taskDependency"].includes(entityType)) {
+    const references = await scanProjectReferences(db, projectId, entityId);
+    retainImmutable.push(...references.retained);
+    removeRelationships.push(...references.operational);
+    warnings.push(...references.warnings);
+    if (references.retained.length) warnings.push("immutable_historical_references_will_be_retained");
+  }
   return { transition: transition.filter((entry) => entry.count), reassign: reassign.filter((entry) => entry.count), removeRelationships: removeRelationships.filter((entry) => entry.count), retainImmutable: retainImmutable.filter((entry) => entry.count), blockers, warnings, requiresTypedConfirmation: blockers.length > 0 || warnings.length > 0 };
 }
 
@@ -158,6 +167,11 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
   const preview = await previewLifecycle(input, { db });
   if (preview.previewToken !== input.previewToken) throw new LifecycleError("stale_preview", 409);
   if (preview.impact.blockers.length) throw new LifecycleError("impact_blocked", 409);
+  const plannedWrites = 4 + [...preview.impact.transition, ...preview.impact.reassign, ...preview.impact.removeRelationships]
+    .reduce((total, entry) => total + entry.count, 0);
+  if (plannedWrites > 250 || (input.entityType === "project" && input.action === "restore" && input.strategy === "project_wide_restore")) {
+    return createLargeLifecycleJob(input, preview, { database: db, now });
+  }
   const projectRef = db.doc(`organizations/${API_ORGANIZATION_ID}/projects/${input.projectId}`);
   const entityRef = targetRef(db, input.projectId, input.entityType, input.entityId);
   return db.runTransaction(async (transaction) => {
@@ -182,6 +196,25 @@ export async function applyLifecycle(input, { db = database(), now = new Date() 
     if (input.entityType === "task" && input.action === "trash") {
       const dependencies = preview.impact.removeRelationships.find((entry) => entry.entityType === "taskDependency")?.ids || [];
       dependencies.forEach((dependencyId) => transaction.update(projectRef.collection("taskDependencies").doc(dependencyId), { lifecycle: { schemaVersion: 1, state: "removed", retentionClass: "relationship_30d", legalHold: false, lastOperationId: opId, removed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline } }));
+    }
+    if (input.entityType === "project" && ["archive", "trash"].includes(input.action)) {
+      for (const group of preview.impact.transition) {
+        const collection = registry[group.entityType]?.collection;
+        if (!collection) continue;
+        group.ids.forEach((entityId) => transaction.update(projectRef.collection(collection).doc(entityId), {
+          lifecycle: {
+            schemaVersion: 1,
+            state: resultingState,
+            retentionClass: "operational_30d",
+            legalHold: false,
+            lastOperationId: opId,
+            parentOperationId: opId,
+            ...(input.action === "archive"
+              ? { archived: { at: timestamp, by: input.actor.id, reason: operation.reason } }
+              : { trashed: { at: timestamp, by: input.actor.id, reason: operation.reason, restoreDeadline: deadline }, purgeEligibleAt: deadline })
+          }
+        }));
+      }
     }
     if (input.entityType === "phase" && input.action === "trash" && input.strategy === "cascade_trash") {
       const tasks = preview.impact.transition.find((entry) => entry.entityType === "task")?.ids || [];

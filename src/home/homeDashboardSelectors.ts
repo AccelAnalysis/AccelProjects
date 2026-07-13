@@ -373,13 +373,13 @@ function getAttentionProjects(
 ): HomeAttentionProject[] {
   return projects
     .map((project) => {
-      const tasks = projectState.tasks.filter((task) => task.projectId === project.id);
+      const tasks = projectState.tasks.filter((task) => task.projectId === project.id && isLifecycleActive(task));
       const openTasks = tasks.filter(isOpenTask);
       const overdueCount = openTasks.filter((task) => isTaskOverdue(task, today)).length;
       const blockedCount = openTasks.filter((task) => task.status === "blocked").length;
       const waitingCount = openTasks.filter((task) => task.status === "waiting_on_client").length;
       const nearMilestone = projectState.milestones
-        .filter((milestone) => milestone.projectId === project.id && milestone.status !== "complete" && isDateOnly(milestone.date) && milestone.date >= today && milestone.date <= addDays(today, 14))
+        .filter((milestone) => milestone.projectId === project.id && isLifecycleActive(milestone) && milestone.status !== "complete" && isDateOnly(milestone.date) && milestone.date >= today && milestone.date <= addDays(today, 14))
         .sort((left, right) => left.date.localeCompare(right.date))[0];
       const reasons: string[] = [];
 
@@ -445,6 +445,7 @@ function getUpcomingMilestones(milestones: Milestone[], projectById: Map<string,
   return milestones
     .filter((milestone) => (
       milestone.status !== "complete"
+      && isLifecycleActive(milestone)
       && isDateOnly(milestone.date)
       && milestone.date <= windowEnd
       && projectById.has(milestone.projectId)
@@ -491,7 +492,7 @@ function getRecentActivity(
 }
 
 function isMeaningfulActivity(event: ProjectActivityEvent, canViewInternal: boolean) {
-  const type = event.type.toLowerCase();
+  const type = String(event.type ?? "").toLowerCase();
 
   if (!canViewInternal) {
     return type.includes("client") || type.includes("approval");
@@ -513,7 +514,7 @@ function isMeaningfulActivity(event: ProjectActivityEvent, canViewInternal: bool
 }
 
 function createProjectSummary(project: Project, clientById: Map<string, Client>, allTasks: Task[]): HomeProjectSummary {
-  const tasks = allTasks.filter((task) => task.projectId === project.id);
+  const tasks = allTasks.filter((task) => task.projectId === project.id && isLifecycleActive(task));
   const completeTasks = tasks.filter((task) => task.status === "done").length;
 
   return {

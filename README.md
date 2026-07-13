@@ -247,11 +247,11 @@ Not supported through update files:
 
 - Client edits, project owner changes, membership changes, organization users, Firebase Authentication users, task comments, activity history rewrites, prior versions, prior snapshots, import manifests, arbitrary restores, or rollbacks.
 
-Apply is one Firestore transaction. A successful file update creates one project revision, one `ProjectVersion`, one activity event, one immutable update manifest keyed by uploaded-file SHA-256 hash, and one canonical result snapshot.
+Updates at or below the atomic limit use one Firestore transaction. A successful file update creates one project revision, one `ProjectVersion`, one activity event, and one immutable update manifest keyed by uploaded-file SHA-256 hash. Atomic updates also store one canonical result snapshot. Schema 1.2 supports explicit archive, trash, restore, and relationship-removal operations while retaining the record; direct lifecycle, retention, actor, audit, and legal-hold edits remain forbidden.
 
 Safety limits:
 
-- Maximum planned writes: 450.
+- Maximum atomic planned writes: 450. Larger lifecycle-only updates (up to 1,000 transitions) queue a server-owned durable job; mixed-content files must be split.
 - Maximum canonical snapshot JSON size: 700,000 UTF-8 bytes.
 
 ## Current Next Work

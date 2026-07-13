@@ -463,6 +463,18 @@ service cloud.firestore {
         allow read, create, update, delete: if false;
       }
 
+      match /lifecycleJobs/{jobId} {
+        allow read, create, update, delete: if false;
+
+        match /items/{itemId} {
+          allow read, create, update, delete: if false;
+        }
+      }
+
+      match /lifecyclePurgeJobs/{jobId} {
+        allow read, create, update, delete: if false;
+      }
+
       match /projects/{projectId} {
         allow get: if canReadProject(organizationId, projectId);
         allow list: if canListProject(organizationId);
@@ -520,6 +532,10 @@ service cloud.firestore {
           allow create: if canWriteProjectData(organizationId) && lifecycleNotCreated();
           allow update: if canManageProjectSchedule(organizationId, projectId) && lifecycleUnchanged();
           allow delete: if false;
+
+          match /versions/{versionId} {
+            allow read, create, update, delete: if false;
+          }
         }
 
         match /metrics/{metricId} {

@@ -11,10 +11,13 @@
     "test": "vitest run src server",
     "test:rules": "firebase emulators:exec --only firestore \"vitest run firestore.rules.test.ts\"",
     "test:storage-rules": "firebase emulators:exec --only storage \"vitest run storage.rules.test.ts\"",
+    "test:lifecycle-acceptance": "FIREBASE_STORAGE_BUCKET=accelprojects-acceptance.appspot.com firebase emulators:exec --only auth,firestore,storage \"vitest run server/lifecycleAcceptance.test.js\"",
+    "seed:lifecycle-acceptance": "node scripts/seed-lifecycle-acceptance.mjs",
     "migrate:membership-access-state": "node scripts/backfill-membership-access-state.mjs",
     "check:committed-files": "node scripts/check-committed-files.mjs",
     "build": "vite build",
     "lifecycle:diagnostics": "node scripts/lifecycle-diagnostics.mjs",
+    "lifecycle:preflight": "node scripts/lifecycle-preflight.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

@@ -95,6 +95,7 @@ export type ProjectUpdateChangeCounts = {
 };
 
 export type ProjectUpdatePlan = {
+  executionMode: "atomic" | "durable_lifecycle_job";
   projectId: string;
   baseRevision: number;
   resultRevision: number;

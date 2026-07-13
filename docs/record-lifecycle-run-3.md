@@ -2,7 +2,7 @@
 
 ## Dependency and baseline
 
-This stacked run is based directly on `codex/record-lifecycle-operational-entities-run-2` commit `5a565a87e3555ca4eca2b1a50cdc91b835b9c015` and depends on draft PRs #17 and #18.
+This historical stacked run is based on `codex/record-lifecycle-operational-entities-run-2`. The actual integrated Run 2 head is `b5f674cf4077ce7c1b118420ad3945d5a81fc527`, not the superseded `5a565a87e3555ca4eca2b1a50cdc91b835b9c015` named in the original PR text. Current guidance is in `record-lifecycle-completion.md`.
 
 The baseline had no Firebase Storage configuration or rules. Project documents were display-only external URLs. Report PDFs were generated in memory and artifact records retained metadata/hashes, not storage objects. Approved report snapshots, report artifacts, delivery attempts, activity events, versions, update/import manifests, and export snapshots were browser immutable. Comments were still created directly by the browser. Run 3 preserves all immutable records and replaces the remaining unsafe paths.
 
@@ -46,7 +46,7 @@ Compliance erasure is a separate administrator-only governance process that woul
 
 ## Diagnostics and restoration
 
-The admin dry-run diagnostics route reports failed/partial operations, purge jobs, eligible records, holds, legacy project records without lifecycle metadata, operation counts, and retained-snapshot semantics. It performs no writes. Storage orphan/missing-object expansion should use bucket inventory in the deployment environment.
+The admin dry-run diagnostics route reports failed/partial operations, purge jobs, eligible records, holds, legacy project records without lifecycle metadata, operation counts, and retained-snapshot semantics. The completion integration adds a bounded, cursor-based bucket and metadata integrity scanner; see `record-lifecycle-completion.md`.
 
 Restores continue to revalidate project revision, task phase, dependency graph, member status, client/owner references, and legal hold. Managed document restore additionally requires retained metadata/version objects; no provider calendar event is recreated automatically. Unresolvable restores remain blocked with a resolution plan.
 
